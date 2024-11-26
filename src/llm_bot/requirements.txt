@@ -1,0 +1,13 @@
+python-telegram-bot
+sqlalchemy
+openai
+json_repair
+requests
+asyncpg
+loguru
+fastapi
+pydantic-settings
+gunicorn
+uvicorn
+langchain
+langchain-openai

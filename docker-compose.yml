@@ -1,0 +1,26 @@
+version: '3.8'
+
+services:
+  llm_bot_postgres:
+    image: postgres:13
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data:rw
+
+  llm_bot_backend:
+    build:
+      context: .
+      dockerfile: src/llm_bot/Dockerfile
+    env_file:
+      - config/.env
+    restart: unless-stopped
+    ports:
+      - "7420:7420"
+    volumes:
+      - ./src:/opt/app-root/src:rw
