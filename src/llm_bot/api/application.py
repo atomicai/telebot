@@ -28,6 +28,7 @@ from llm_bot.db.utils import get_session
 
 @lru_cache
 def get_telegram_application() -> Application:
+
     application = Application.builder().token(telegram_bot_config.TOKEN).build()
 
     application.add_handler(CommandHandler("start", start))
