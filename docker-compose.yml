@@ -11,16 +11,20 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - ./data/postgres:/var/lib/postgresql/data:rw
+      - pgvolume:/var/lib/postgresql/data:rw
 
   llm_bot_backend:
     build:
       context: .
-      dockerfile: src/llm_bot/Dockerfile
+      dockerfile: Dockerfile
     env_file:
-      - config/.env
+      - .env
     restart: unless-stopped
     ports:
       - "7420:7420"
     volumes:
       - ./src:/opt/app-root/src:rw
+  
+volumes:
+  pgvolume:
+    external: false
