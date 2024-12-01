@@ -1,106 +1,58 @@
-from enum import Enum as PyEnum
+from enum import Enum
+from datetime import datetime
 
-from sqlalchemy import (
-    Column,
-    Integer,
-    String,
-    Boolean,
-    ForeignKey,
-    DateTime,
-    Text,
-    Enum,
-    func, CheckConstraint
-)
-from sqlalchemy.orm import relationship
-
-from llm_bot.db.database import Base
+class MessageTypeEnum(Enum):
+    system = "system"
+    human = "human"
+    ai = "ai"
 
 
-class User(Base):
-    __tablename__ = 'users'
-
-    id = Column(Integer, primary_key=True)
-    first_name = Column(String, nullable=False)
-    last_name = Column(String, nullable=True)
-    username = Column(String, nullable=True)
-    is_premium = Column(Boolean, default=False, nullable=True)
-    language_code = Column(String, nullable=True)
-    active_thread_id = Column(Integer, ForeignKey('threads.id'), nullable=True)
-    current_thread_offset = Column(Integer, default=0, nullable=False)
-
-    created_at = Column(DateTime, server_default=func.now(), nullable=False)
-    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
-
-    threads = relationship(
-        'Thread',
-        back_populates='user',
-        cascade='all, delete-orphan',
-        foreign_keys='Thread.user_id'
-    )
-    active_thread = relationship(
-        'Thread',
-        foreign_keys=[active_thread_id],
-        uselist=False
-    )
+class RatingEnum(Enum):
+    like = "like"
+    dislike = "dislike"
 
 
-class Thread(Base):
-    __tablename__ = 'threads'
-
-    id = Column(Integer, primary_key=True)
-    user_id = Column(Integer, ForeignKey('users.id'))
-    title = Column(String, nullable=False)
-
-    created_at = Column(DateTime, server_default=func.now(), nullable=False)
-    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
-
-    user = relationship(
-        'User',
-        back_populates='threads',
-        foreign_keys=[user_id]
-    )
-    messages = relationship(
-        'Message',
-        back_populates='thread',
-        cascade='all, delete-orphan'
-    )
+class User:
+    """Модель пользователя."""
+    def __init__(self, id: int, first_name: str, last_name: str = None, username: str = None,
+                 is_premium: bool = False, language_code: str = None, active_thread_id: int = None,
+                 current_thread_offset: int = 0):
+        self.id = id
+        self.first_name = first_name
+        self.last_name = last_name
+        self.username = username
+        self.is_premium = is_premium
+        self.language_code = language_code
+        self.active_thread_id = active_thread_id
+        self.current_thread_offset = current_thread_offset
+        self.created_at = datetime.utcnow()
+        self.updated_at = datetime.utcnow()
 
 
-class MessageTypeEnum(str, PyEnum):
-    system = 'system'
-    human = 'human'
-    ai = 'ai'
+class Thread:
+    """Модель потока (чата)."""
+    def __init__(self, id: int, user_id: int, title: str):
+        self.id = id
+        self.user_id = user_id
+        self.title = title
+        self.created_at = datetime.utcnow()
+        self.updated_at = datetime.utcnow()
 
 
-class RatingEnum(str, PyEnum):
-    like = 'like'
-    dislike = 'dislike'
+class Message:
+    """Модель сообщения."""
+    def __init__(self, id: int, thread_id: int, text: str, message_type: MessageTypeEnum, rating: RatingEnum = None):
+        self.id = id
+        self.thread_id = thread_id
+        self.text = text
+        self.message_type = message_type
+        self.rating = rating
+        self.created_at = datetime.utcnow()
+        self.updated_at = datetime.utcnow()
 
 
-class Message(Base):
-    __tablename__ = 'messages'
-
-    id = Column(Integer, primary_key=True)
-    thread_id = Column(Integer, ForeignKey('threads.id'))
-    text = Column(Text)
-    message_type = Column(Enum(MessageTypeEnum), nullable=False)
-    rating = Column(Enum(RatingEnum), nullable=True)
-
-    created_at = Column(DateTime, server_default=func.now(), nullable=False)
-    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
-
-    thread = relationship('Thread', back_populates='messages')
-
-    __table_args__ = (
-        CheckConstraint(
-            "(message_type != 'ai' AND rating IS NULL) OR message_type = 'ai'",
-            name="check_ai_rating_constraint"
-        ),
-    )
-
-
-class KV(Base):
-    __tablename__ = 'kv'
-
-    key = Column(String, primary_key=True)
-    value = Column(Text, nullable=True)
+class KV:
+    """Модель для KV-хранилища."""
+    def __init__(self, key: str, value: str = None):
+        self.key = key
+        self.value = value

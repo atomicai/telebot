@@ -1,17 +1,17 @@
 version: '3.8'
 
 services:
-  llm_bot_postgres:
-    image: postgres:13
+  rethinkdb:
+    image: rethinkdb:latest
+    container_name: llm_bot_rethinkdb
     environment:
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: ${POSTGRES_DB}
+      - RETHINKDB_DB=${RETHINKDB_DB}
     restart: unless-stopped
     ports:
-      - "5433:5432"
+      - "28015:28015"
+      - "8080:8080"
     volumes:
-      - pgvolume:/var/lib/postgresql/data:rw
+      - rethinkdb_data:/data:rw
 
   llm_bot_backend:
     build:
@@ -24,7 +24,7 @@ services:
       - "7420:7420"
     volumes:
       - ./src:/opt/app-root/src:rw
-  
+
 volumes:
-  pgvolume:
+  rethinkdb_data:
     external: false

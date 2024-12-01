@@ -1,22 +1,19 @@
-import asyncio
-
+import sys
 from loguru import logger
 
-from llm_bot.api.application import get_telegram_application, set_commands
-from llm_bot.db.database import init_db
+
+def configure_logging():
+
+    logger.remove()
 
 
-def start_application():
-    logger.info("Starting bot in polling mode")
-
-    application = get_telegram_application()
-
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(set_commands(application))
-    loop.run_until_complete(init_db())
-
-    application.run_polling()
+    logger.add(
+        sys.stdout,
+        level="INFO",
+        format="{time:YYYY-MM-DD HH:mm:ss} | {level} | {message}",
+        colorize=True
+    )
 
 
 if __name__ == "__main__":
-    start_application()
+    configure_logging()
