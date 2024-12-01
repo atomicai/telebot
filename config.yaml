@@ -1,0 +1,10 @@
+LLM:
+  prompt: 'Ты чат бот'
+  temperature: 0.1
+  max_tokens: 4096
+  edit_interval: 1
+  initial_token_threshold: 1
+  typing_interval: 5
+  model_base_url: https://b3r0a7f3dl4l.share.zrok.io
+
+  fallback_openai_model: gpt-3.5-turbo
