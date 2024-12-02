@@ -1,5 +1,8 @@
 from typing import Optional, List
+import os
 from loguru import logger
+
+
 from telegram import (
     Update,
     InlineKeyboardButton,
@@ -12,14 +15,15 @@ from telegram.constants import ChatAction
 from telegram.error import BadRequest
 
 from rethinkdb import r
-import os
+
 from langchain_openai import ChatOpenAI
 from langchain_core.callbacks import AsyncCallbackManager
-
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
+from langchain.schema import LLMResult
 
-from llm_bot.api.utils import default_chat_title
-from llm_bot.db.repository import (
+
+from src.api.utils import default_chat_title
+from src.db.repository import (
     upsert_user,
     get_active_thread,
     get_user_threads,
@@ -31,41 +35,15 @@ from llm_bot.db.repository import (
     get_value,
     get_kv_pairs,
 )
-from llm_bot.db.utils import rethinkdb_connection
-from llm_bot.domain.telegram_streaming_handler import TelegramStreamingHandler
-from llm_bot.db.models import MessageTypeEnum, RatingEnum
+from src.db.utils import rethinkdb_connection
+from src.domain.running.telegram_chatter import TelegramChatter
+from src.db.models import MessageTypeEnum, RatingEnum
 
-def get_main_menu_keyboard(context, selected_thread: Optional[dict] = None, active_thread: Optional[dict] = None) -> ReplyKeyboardMarkup | ReplyKeyboardRemove:
-    """Создаёт главное меню для управления чатами."""
-    if not context.user_data.get("menu_active", False):
-        return ReplyKeyboardRemove()
+from src.api.keyboards import get_delete_confirmation_keyboard, get_rating_keyboard, get_main_menu_keyboard, generate_thread_keyboard
 
-    if selected_thread:
-        is_active = selected_thread["id"] == (active_thread["id"] if active_thread else None)
-        first_button_text = f"✅ {selected_thread['title']}" if is_active else f"◻️ {selected_thread['title']}"
-        buttons = [
-            [
-                KeyboardButton(first_button_text),
-                KeyboardButton("💬 Сообщения"),
-            ],
-            [
-                KeyboardButton("✏️ Отредактировать"),
-                KeyboardButton("🗑️ Удалить"),
-            ],
-            [
-                KeyboardButton("📜 Чаты"),
-                KeyboardButton("➕ Создать чат"),
-            ],
-        ]
-    else:
-        buttons = [
-            [
-                KeyboardButton("📜 Чаты"),
-                KeyboardButton("➕ Создать чат"),
-            ]
-        ]
 
-    return ReplyKeyboardMarkup(buttons, resize_keyboard=True, one_time_keyboard=False)
+
+
 
 
 def format_messages(messages: List[dict]) -> str:
@@ -77,41 +55,6 @@ def format_messages(messages: List[dict]) -> str:
         elif msg["message_type"] == MessageTypeEnum.ai.value:
             formatted_messages.append(f"Бот:\n{msg['text']}")
     return "\n\n".join(formatted_messages)
-
-
-async def generate_thread_keyboard(connection, user, limit=10, offset=0) -> InlineKeyboardMarkup:
-    threads, total = await get_user_threads(connection, user["id"], limit=limit, offset=offset)
-
-
-    offset = int(offset)
-
-    keyboard = [
-        [
-            InlineKeyboardButton(
-                text=f"{t['title']}{' ✅' if t['id'] == user.get('active_thread_id') else ' ◻️'}",
-                callback_data=f"thread_{t['id']}",
-            )
-        ]
-        for t in threads
-    ]
-
-    pagination_buttons = []
-
-    if offset > 0:
-        pagination_buttons.append(
-            InlineKeyboardButton("⬅️", callback_data=f"page_{max(0, offset - limit)}")
-        )
-
-    pagination_buttons.append(InlineKeyboardButton("➕", callback_data="create_new_chat"))
-
-    if offset + limit < total:
-        pagination_buttons.append(
-            InlineKeyboardButton("➡️", callback_data=f"page_{offset + limit}")
-        )
-
-    keyboard.append(pagination_buttons)
-    return InlineKeyboardMarkup(keyboard)
-
 
 
 async def start(update: Update, context):
@@ -207,7 +150,7 @@ async def chat_command(update: Update, context):
             "is_premium": update.message.from_user.is_premium,
         })
 
-        # Получаем список чатов с пагинацией
+
         keyboard = await generate_thread_keyboard(
             connection,
             user,
@@ -215,7 +158,7 @@ async def chat_command(update: Update, context):
             offset=user.get("current_thread_offset", 0)
         )
 
-        # Отправляем клавиатуру пользователю
+
         await update.message.reply_text("Ваши чаты:", reply_markup=keyboard)
 
 
@@ -280,7 +223,7 @@ async def callback_query_handler(update: Update, context):
 
         elif data.startswith("rate_"):
             parts = data.split("_")
-            message_id = int(parts[1])
+            message_id = parts[1]
             rating_str = parts[2]
 
             if rating_str == "like":
@@ -306,15 +249,7 @@ async def callback_query_handler(update: Update, context):
 
             await query.message.reply_text(
                 "Вы уверены, что хотите удалить чат?",
-                reply_markup=InlineKeyboardMarkup(
-                    [
-                        [
-                            InlineKeyboardButton("✅ Да", callback_data=f"confirm_delete_{thread_id}"),
-                            InlineKeyboardButton("❌ Нет", callback_data="cancel_delete"),
-                        ]
-                    ]
-                ),
-            )
+                reply_markup=get_delete_confirmation_keyboard(thread_id))
 
         elif data.startswith("confirm_delete_"):
             thread_id = data.split("_")[2]
@@ -435,14 +370,7 @@ async def user_message(update: Update, context):
                 user_data["delete_thread_id"] = selected_thread["id"]
                 await update.message.reply_text(
                     "Вы уверены, что хотите удалить чат?",
-                    reply_markup=InlineKeyboardMarkup(
-                        [
-                            [
-                                InlineKeyboardButton("✅ Да", callback_data=f"confirm_delete_{selected_thread['id']}"),
-                                InlineKeyboardButton("❌ Нет", callback_data="cancel_delete"),
-                            ]
-                        ]
-                    ),
+                    reply_markup=get_delete_confirmation_keyboard(selected_thread["id"])
                 )
             else:
                 await update.message.reply_text("Нет выбранного чата для удаления.")
@@ -512,7 +440,6 @@ async def user_message(update: Update, context):
                                                           set_active=True)
             user_data["selected_thread_id"] = active_thread["id"]
 
-
         human_message = await add_message_to_thread(
             connection,
             thread_id=active_thread["id"],
@@ -522,35 +449,34 @@ async def user_message(update: Update, context):
 
         db_messages = await get_all_messages_by_thread_id(connection, active_thread["id"])
 
-
         default_prompt = await get_value(connection, "model_promt")
-        messages = [{"type": "system", "content": default_prompt}]
+
+
+        messages = [SystemMessage(content=default_prompt)]
+
         for message in db_messages:
             if message["message_type"] == MessageTypeEnum.human.value:
-                messages.append({"type": "human", "content": message["text"]})
-            else:
-                messages.append({"type": "ai", "content": message["text"]})
+                messages.append(HumanMessage(content=message["text"]))
+            elif message["message_type"] == MessageTypeEnum.ai.value:
+                messages.append(AIMessage(content=message["text"]))
 
-        # Получаем настройки LLM из таблицы kv
         kv_dict = await get_kv_pairs(
             connection,
             keys=[
+                "model_promt",
                 "model_base_url",
+                "model_openai_api_key",
+                "model_temperature",
+                "model_max_tokens",
+                "model_openai_default_model",
                 "model_edit_interval",
                 "model_initial_token_threshold",
-                "model_max_tokens",
-                "model_openai_api_key",
-                "model_openai_default_model",
-                "model_promt",
-                "model_temperature",
                 "model_typing_interval",
             ]
         )
 
-        logger.info(f"Extracted KV pairs: {kv_dict}")
-
-
-        handler = TelegramStreamingHandler(
+        # Настраиваем обработчик Telegram
+        handler = TelegramChatter(
             message=update.message,
             bot=context.bot,
             chat_id=update.effective_chat.id,
@@ -558,13 +484,13 @@ async def user_message(update: Update, context):
             initial_token_threshold=int(kv_dict.get("model_initial_token_threshold", 5)),
             typing_interval=int(kv_dict.get("model_typing_interval", 2)),
         )
+        print(kv_dict.get("model_base_url"))
         callback_manager = AsyncCallbackManager([handler])
 
+        # Пробуем вызвать LLM через базовый URL
         try:
-
             llm = ChatOpenAI(
                 base_url=kv_dict.get("model_base_url"),
-                model_promt="Ты чат бот",
                 openai_api_key=kv_dict.get("model_openai_api_key"),
                 temperature=float(kv_dict.get("model_temperature", 0.5)),
                 max_tokens=int(kv_dict.get("model_max_tokens", 4096)),
@@ -572,14 +498,15 @@ async def user_message(update: Update, context):
                 callback_manager=callback_manager,
                 verbose=True,
             )
-            response = await llm.agenerate(messages=[messages])
+            response: LLMResult = await llm.agenerate(messages=[messages])
+
         except Exception as e:
             logger.error(f"Error using base_url LLM: {e}")
-            try:
 
+            # Fallback на модель OpenAI по умолчанию
+            try:
                 llm = ChatOpenAI(
                     model_name=kv_dict.get("model_openai_default_model", "gpt-3.5-turbo"),
-                    model_promt="Ты чат бот",
                     openai_api_key=kv_dict.get("model_openai_api_key"),
                     temperature=float(kv_dict.get("model_temperature", 0.5)),
                     max_tokens=int(kv_dict.get("model_max_tokens", 4096)),
@@ -587,34 +514,31 @@ async def user_message(update: Update, context):
                     callback_manager=callback_manager,
                     verbose=True,
                 )
-                response = await llm.agenerate(messages=[messages])
+                response: LLMResult = await llm.agenerate(messages=[messages])
             except Exception as e2:
                 logger.error(f"Error using fallback LLM: {e2}")
                 await update.message.reply_text("Извините, у меня возникли проблемы с генерацией ответа.")
                 return
 
+        # Извлекаем текст ответа от модели
+        ai_message = response.generations[0][0].text
 
-        ai_response = response.generations[0][0].text
-
-
-        ai_message = await add_message_to_thread(
+        # Сохраняем ответ модели в базе данных
+        ai_message_db = await add_message_to_thread(
             connection,
             thread_id=active_thread["id"],
-            text=ai_response,
+            text=ai_message,
             message_type=MessageTypeEnum.ai.value,
         )
 
+        rating_keyboard = get_rating_keyboard(ai_message_db["id"])
 
-        rating_keyboard = InlineKeyboardMarkup([
-            [
-                InlineKeyboardButton("👍", callback_data=f"rate_{ai_message['id']}_like"),
-                InlineKeyboardButton("👎", callback_data=f"rate_{ai_message['id']}_dislike"),
-            ]
-        ])
-
+        # Пробуем обновить сообщение с клавиатурой
         try:
             await handler.message.edit_reply_markup(reply_markup=rating_keyboard)
         except BadRequest as e:
             logger.error(f"Error editing message: {e}")
             await update.message.reply_text('🤖 Оцените ответ:', reply_markup=rating_keyboard)
+
+
 

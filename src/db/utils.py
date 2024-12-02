@@ -1,6 +1,6 @@
 from contextlib import asynccontextmanager
 from rethinkdb import r
-from llm_bot.db.database import RDB_HOST, RDB_PORT, RDB_DB
+from src.db.database import RDB_HOST, RDB_PORT, RDB_DB
 
 
 
@@ -20,11 +20,11 @@ async def rethinkdb_connection():
 async def setup_rethinkdb():
     """Инициализация базы данных и таблиц в RethinkDB."""
     async with await r.connect(host=RDB_HOST, port=RDB_PORT) as connection:
-        # Проверяем наличие базы данных
+
         if RDB_DB not in await r.db_list().run(connection):
             await r.db_create(RDB_DB).run(connection)
 
-        # Проверяем наличие таблиц
+
         required_tables = ["users", "threads", "messages", "kv"]
         existing_tables = await r.db(RDB_DB).table_list().run(connection)
         for table in required_tables:

@@ -6,7 +6,7 @@ from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from starlette import status
 from starlette.exceptions import HTTPException
 
-from llm_bot.api.security.config import security_config
+from src.api.security.config import security_config
 
 basic_security = HTTPBasic()
 

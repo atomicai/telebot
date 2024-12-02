@@ -2,7 +2,6 @@ import asyncio
 from contextlib import asynccontextmanager
 from functools import lru_cache
 from typing import Optional
-from llb_bot.db.database import RDB_HOST, RDB_PORT, RDB_DB
 
 from fastapi import Depends, FastAPI
 from loguru import logger
@@ -17,12 +16,14 @@ from telegram.ext import (
     filters,
 )
 
-from llm_bot.api.commands import start, user_message, callback_query_handler, new_chat_command, enable_chat_command
-from llm_bot.api.config.kv_config import kv_settings
-from llm_bot.api.config.model_config import model_settings
-from llm_bot.api.config.telegram_bot_config import telegram_bot_config
-from llm_bot.api.security.security import get_admin_username
-from llm_bot.db.repository import set_value, get_value, get_keys, bulk_set_if_not_exists
+from src.api.commands import start, user_message, callback_query_handler, new_chat_command, enable_chat_command
+from src.api.config.kv_config import kv_settings
+from src.api.config.model_config import model_settings
+from src.api.config.telegram_bot_config import telegram_bot_config
+from src.api.security.security import get_admin_username
+from src.db.repository import set_value, get_value, get_keys, bulk_set_if_not_exists
+from src.db.database import RDB_HOST, RDB_PORT, RDB_DB
+
 from rethinkdb import r
 
 
@@ -31,7 +32,6 @@ async def setup_rethinkdb():
     """Инициализация базы данных и таблиц."""
     async with await r.connect(host=RDB_HOST, port=RDB_PORT) as conn:
         logger.info("Setting up RethinkDB database and tables.")
-        # Create database if it doesn't exist
         if RDB_DB not in await r.db_list().run(conn):
             await r.db_create(RDB_DB).run(conn)
 
@@ -96,10 +96,10 @@ async def rethinkdb_connection():
 async def telegram_application_lifespan(app):
     """Жизненный цикл приложения с Telegram-ботом."""
     application = get_telegram_application()
-    await setup_rethinkdb()  # Инициализация базы данных
 
     async with application:
         await set_commands(application)
+        await setup_rethinkdb()
         await application.start()
         await set_webhook()
 

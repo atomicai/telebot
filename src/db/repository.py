@@ -1,8 +1,11 @@
-from rethinkdb import r
 from typing import Optional, List, Dict
 from loguru import logger
+import os
 
-DB_NAME = "llm_bot_db"
+from src.db.database import RDB_DB
+from rethinkdb import r
+
+DB_NAME = os.getenv("RETHINKDB_DB")
 
 async def upsert_user(connection, user_data: Dict, offset: Optional[int] = None) -> Dict:
     users_table = r.db(DB_NAME).table("users")
@@ -31,8 +34,9 @@ async def get_user_threads(connection, user_id: int, limit: int = 10, offset: in
     limit = int(limit)
 
     cursor = (
-        await threads_table.filter({"user_id": user_id})
-        .order_by("id")
+        await threads_table
+        .filter({"user_id": user_id})
+        .order_by(r.desc("created_at"))  # Сортировка по убыванию даты
         .slice(offset, offset + limit)
         .run(connection)
     )
@@ -55,7 +59,7 @@ async def create_or_update_thread(
         if title:
             thread["title"] = title
         await threads_table.get(thread_id).update(thread).run(connection)
-    else:  # Create a new thread
+    else:
         thread = {"user_id": user_id, "title": title}
         result = await threads_table.insert(thread, return_changes=True).run(connection)
         thread = result["changes"][0]["new_val"]
@@ -154,9 +158,9 @@ async def update_message(
 
 async def get_value(connection, key: str) -> Optional[str]:
     kv_table = r.db(DB_NAME).table("kv")
-    kv = await kv_table.get(key).run(connection)
+    kv_cursor = await kv_table.filter({"key": key}).run(connection)
+    kv = await kv_cursor.next() if kv_cursor else None
     return kv["value"] if kv else None
-
 
 async def set_value(connection, key: str, value: str):
     kv_table = r.db(DB_NAME).table("kv")
@@ -193,13 +197,25 @@ async def get_kv_pairs(connection, keys: List[str]) -> Dict[str, Optional[str]]:
     return result
 
 
+async def bulk_set_if_not_exists(connection, kv_dict: dict[str, str]) -> None:
+    cursor = await r.db(RDB_DB).table("kv").filter(
+        lambda doc: r.expr(list(kv_dict.keys())).contains(doc["key"])
+    ).run(connection)
 
-async def bulk_set_if_not_exists(connection, kv_dict: dict):
-    kv_table = r.db("llm_bot_db").table("kv")
-    for key, value in kv_dict.items():
-        existing_kv = await kv_table.get(key).run(connection)
-        if not existing_kv:
-            await kv_table.insert({"key": key, "value": value}).run(connection)
-        else:
 
-            logger.info(f"Key already exists: {key}, skipping insertion")
+    existing_keys = set()
+    async for entry in cursor:
+        existing_keys.add(entry["key"])
+
+
+    new_kv_entries = [
+        {"id": key, "key": key, "value": str(value)}
+        for key, value in kv_dict.items()
+        if key not in existing_keys
+    ]
+
+
+    if new_kv_entries:
+        await r.db(RDB_DB).table("kv").insert(new_kv_entries).run(connection)
+
+

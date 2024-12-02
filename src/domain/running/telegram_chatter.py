@@ -5,10 +5,10 @@ from loguru import logger
 from telegram.constants import ChatAction
 from telegram.error import BadRequest
 
-from llm_bot.api.utils import suppress_and_log
+from src.api.utils import suppress_and_log
 
 
-class TelegramStreamingHandler(AsyncCallbackHandler):
+class TelegramChatter(AsyncCallbackHandler):
     def __init__(self, message, bot=None, chat_id=None, edit_interval=1, initial_token_threshold=1, typing_interval=5):
         self.bot = bot
         self.chat_id = chat_id

@@ -1,3 +1,3 @@
 #!/bin/sh
 
-exec gunicorn --config /opt/app-root/src/llm_bot/api/config/gunicorn.conf.py
+exec gunicorn -c /opt/app-root/src/api/config/gunicorn.conf.py api.application:app
