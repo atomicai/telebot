@@ -11,7 +11,7 @@ class SGIConfig(BaseSettings):
     AUTO_RELOAD: bool = True
     TIMEOUT: int = 420
 
-    WSGI_APP: str = "llm_bot.api.application:app"
+    WSGI_APP: str = "api.application:app"
     WORKER_CLASS: str = "uvicorn.workers.UvicornWorker"
 
     model_config = SettingsConfigDict(env_prefix='SGI_')
