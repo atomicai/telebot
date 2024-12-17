@@ -2,7 +2,6 @@ from typing import Optional, List
 import os
 from loguru import logger
 
-
 from telegram import (
     Update,
     InlineKeyboardButton,
@@ -14,36 +13,22 @@ from telegram import (
 from telegram.constants import ChatAction
 from telegram.error import BadRequest
 
-from rethinkdb import r
-
 from langchain_openai import ChatOpenAI
 from langchain_core.callbacks import AsyncCallbackManager
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 from langchain.schema import LLMResult
 
-
 from src.api.utils import default_chat_title
-from src.db.repository import (
-    upsert_user,
-    get_active_thread,
-    get_user_threads,
-    create_or_update_thread,
-    get_thread_by_id,
-    delete_thread,
-    add_message_to_thread,
-    get_all_messages_by_thread_id,
-    get_value,
-    get_kv_pairs,
-)
-from src.db.utils import rethinkdb_connection
-from src.domain.running.telegram_chatter import TelegramChatter
-from src.db.models import MessageTypeEnum, RatingEnum
-
-from src.api.keyboards import get_delete_confirmation_keyboard, get_rating_keyboard, get_main_menu_keyboard, generate_thread_keyboard
+from src.running.restore import RethinkDocStore  # Импортируем наш новый класс
+from src.running.telegram_chatter import TelegramChatter
+from src.etc.schema import MessageTypeEnum, RatingEnum
+from src.api.keyboards import KeyboardManager
 
 
-
-
+def get_keyboard_manager(store: RethinkDocStore):
+    # Предполагается, что KeyboardManager будет работать с store или store.conn
+    # Например, KeyboardManager(store) или KeyboardManager(store.conn)
+    return KeyboardManager(store)  # или KeyboardManager(store.conn), если так реализовано
 
 
 def format_messages(messages: List[dict]) -> str:
@@ -59,10 +44,14 @@ def format_messages(messages: List[dict]) -> str:
 
 async def start(update: Update, context):
     """Обработчик команды /start."""
-    async with rethinkdb_connection() as connection:
+    store = RethinkDocStore()
+    await store.connect()
+    try:
+        keyboard_manager = get_keyboard_manager(store)
+
         logger.info("Received /start command")
 
-        user = await upsert_user(connection, {
+        user = await store.upsert_user({
             "id": update.message.from_user.id,
             "first_name": update.message.from_user.first_name,
             "last_name": update.message.from_user.last_name,
@@ -71,10 +60,9 @@ async def start(update: Update, context):
             "is_premium": update.message.from_user.is_premium,
         })
 
-        active_thread = await get_active_thread(connection, user["id"])
+        active_thread = await store.get_active_thread(user["id"])
         if not active_thread:
-            active_thread = await create_or_update_thread(
-                connection,
+            active_thread = await store.create_or_update_thread(
                 user_id=user["id"],
                 title=default_chat_title(),
                 set_active=True
@@ -84,14 +72,19 @@ async def start(update: Update, context):
             "Я большая языковая модель, начни со мной общение просто отправив любое сообщение.\n"
             "Создать новый чат /new_chat\n"
             "Включить/выключить меню /chat",
-            reply_markup=get_main_menu_keyboard(context, None, active_thread)
+            reply_markup=keyboard_manager.get_main_menu_keyboard(context=context, selected_thread=None, active_thread=active_thread)
         )
+    finally:
+        await store.close()
 
 
 async def enable_chat_command(update: Update, context):
-    """Обработчик команды /chat для активации/деактивации меню."""
-    async with rethinkdb_connection() as connection:
-        user = await upsert_user(connection, {
+    store = RethinkDocStore()
+    await store.connect()
+    try:
+        keyboard_manager = get_keyboard_manager(store)
+
+        user = await store.upsert_user({
             "id": update.message.from_user.id,
             "first_name": update.message.from_user.first_name,
             "last_name": update.message.from_user.last_name,
@@ -101,25 +94,30 @@ async def enable_chat_command(update: Update, context):
         })
 
         user_data = context.user_data
-
         user_data["menu_active"] = not user_data.get("menu_active", False)
 
         if user_data["menu_active"]:
-            active_thread = await get_active_thread(connection, user["id"])
+            active_thread = await store.get_active_thread(user["id"])
             await update.message.reply_text(
                 "Меню активировано.",
-                reply_markup=get_main_menu_keyboard(context, None, active_thread)
+                reply_markup=keyboard_manager.get_main_menu_keyboard(context=context, selected_thread=None, active_thread=active_thread)
             )
         else:
             await update.message.reply_text(
                 "Меню скрыто.",
                 reply_markup=ReplyKeyboardRemove()
             )
+    finally:
+        await store.close()
+
 
 async def new_chat_command(update: Update, context):
-    """Обработчик команды /new_chat для создания нового чата."""
-    async with rethinkdb_connection() as connection:
-        user = await upsert_user(connection, {
+    store = RethinkDocStore()
+    await store.connect()
+    try:
+        keyboard_manager = get_keyboard_manager(store)
+
+        user = await store.upsert_user({
             "id": update.message.from_user.id,
             "first_name": update.message.from_user.first_name,
             "last_name": update.message.from_user.last_name,
@@ -128,20 +126,25 @@ async def new_chat_command(update: Update, context):
             "is_premium": update.message.from_user.is_premium,
         })
 
-        thread = await create_or_update_thread(connection, user["id"], title=default_chat_title(), set_active=True)
+        thread = await store.create_or_update_thread(user["id"], title=default_chat_title(), set_active=True)
 
         await update.message.reply_text("Вы создали новый чат")
         await update.message.reply_text(
             f"Активный чат: {thread['title']}",
-            reply_markup=get_main_menu_keyboard(context, selected_thread=thread, active_thread=thread)
+            reply_markup=keyboard_manager.get_main_menu_keyboard(context, selected_thread=thread, active_thread=thread)
         )
+    finally:
+        await store.close()
 
 
 async def chat_command(update: Update, context):
-    """Обработчик команды /chat для отображения списка чатов."""
-    async with rethinkdb_connection() as connection:
+    store = RethinkDocStore()
+    await store.connect()
+    try:
+        keyboard_manager = get_keyboard_manager(store)
+
         logger.info("Received /chat command")
-        user = await upsert_user(connection, {
+        user = await store.upsert_user({
             "id": update.message.from_user.id,
             "first_name": update.message.from_user.first_name,
             "last_name": update.message.from_user.last_name,
@@ -150,26 +153,27 @@ async def chat_command(update: Update, context):
             "is_premium": update.message.from_user.is_premium,
         })
 
-
-        keyboard = await generate_thread_keyboard(
-            connection,
-            user,
+        keyboard = await keyboard_manager.generate_thread_keyboard(
+            user=user,
             limit=10,
             offset=user.get("current_thread_offset", 0)
         )
-
-
         await update.message.reply_text("Ваши чаты:", reply_markup=keyboard)
+    finally:
+        await store.close()
 
 
 async def callback_query_handler(update: Update, context):
-    """Обработчик callback-запросов из клавиатуры."""
-    async with rethinkdb_connection() as connection:
+    store = RethinkDocStore()
+    await store.connect()
+    try:
+        keyboard_manager = get_keyboard_manager(store)
+
         logger.info("Received callback query")
         query = update.callback_query
         data = query.data
 
-        user = await upsert_user(connection, {
+        user = await store.upsert_user({
             "id": update.effective_user.id,
             "first_name": update.effective_user.first_name,
             "last_name": update.effective_user.last_name,
@@ -179,29 +183,31 @@ async def callback_query_handler(update: Update, context):
         })
         user_data = context.user_data
 
+        print(f"вот дата {data}")
+
         if data.startswith("thread_"):
             thread_id = data.split("_")[1]
-            thread = await get_thread_by_id(connection, thread_id)
+            thread = await store.get_thread_by_id(thread_id)
             user_data["selected_thread_id"] = thread_id
 
-            active_thread = await get_active_thread(connection, user["id"])
+            active_thread = await store.get_active_thread(user["id"])
 
             await query.message.reply_text(
                 f"Выбран чат: {thread['title']}",
-                reply_markup=get_main_menu_keyboard(context, selected_thread=thread, active_thread=active_thread)
+                reply_markup=keyboard_manager.get_main_menu_keyboard(context, selected_thread=thread, active_thread=active_thread)
             )
             await query.answer()
             return
 
         if data == "show_chats":
-            keyboard = await generate_thread_keyboard(
-                connection, user, limit=10, offset=user.get("current_thread_offset", 0)
+            keyboard = await keyboard_manager.generate_thread_keyboard(
+                user=user, limit=10, offset=user.get("current_thread_offset", 0)
             )
             await query.message.reply_text("Чаты:", reply_markup=keyboard)
 
         elif data.startswith("show_history_"):
             thread_id = data.split("_")[2]
-            messages = await get_all_messages_by_thread_id(connection, thread_id)
+            messages = await store.get_all_messages_by_thread_id(thread_id)
 
             formatted_messages = format_messages(messages)
 
@@ -234,34 +240,34 @@ async def callback_query_handler(update: Update, context):
                 await query.answer("Неверная оценка.")
                 return
 
-            message = await r.db("llm_bot_db").table("messages").get(message_id).run(connection)
-            if message:
-                await r.db("llm_bot_db").table("messages").get(message_id).update({"rating": rating}).run(connection)
+            # Попытка обновить сообщение с рейтингом через update_message
+            try:
+                await store.update_message(message_id, rating=rating)
                 await query.answer("Спасибо за вашу оценку!")
                 await query.edit_message_reply_markup(reply_markup=None)
-            else:
+            except ValueError:
                 await query.answer("Сообщение не найдено.")
 
         elif data.startswith("delete_"):
             thread_id = data.split("_")[1]
-            thread = await get_thread_by_id(connection, thread_id)
+            thread = await store.get_thread_by_id(thread_id)
             user_data["delete_thread_id"] = thread_id
 
             await query.message.reply_text(
                 "Вы уверены, что хотите удалить чат?",
-                reply_markup=get_delete_confirmation_keyboard(thread_id))
+                reply_markup=keyboard_manager.get_delete_confirmation_keyboard(thread_id))
 
         elif data.startswith("confirm_delete_"):
             thread_id = data.split("_")[2]
-            await delete_thread(connection, thread_id)
+            await store.delete_thread(thread_id)
             user_data.pop("delete_thread_id", None)
             selected_thread_id = user_data.pop("selected_thread_id", None)
 
-            active_thread = await get_active_thread(connection, user["id"])
+            active_thread = await store.get_active_thread(user["id"])
 
             await query.message.reply_text(
                 "Чат удален.",
-                reply_markup=get_main_menu_keyboard(
+                reply_markup=keyboard_manager.get_main_menu_keyboard(
                     context, selected_thread=None, active_thread=active_thread
                 )
             )
@@ -269,47 +275,51 @@ async def callback_query_handler(update: Update, context):
         elif data == "cancel_delete":
             user_data.pop("delete_thread_id", None)
             selected_thread_id = user_data.get("selected_thread_id")
-            active_thread = await get_active_thread(connection, user["id"])
+            active_thread = await store.get_active_thread(user["id"])
             selected_thread = (
-                await get_thread_by_id(connection, selected_thread_id) if selected_thread_id else None
+                await store.get_thread_by_id(selected_thread_id) if selected_thread_id else None
             )
             await query.message.reply_text(
                 "Удаление отменено.",
-                reply_markup=get_main_menu_keyboard(
+                reply_markup=keyboard_manager.get_main_menu_keyboard(
                     context, selected_thread=selected_thread, active_thread=active_thread
                 )
             )
 
         elif data.startswith("page_"):
             offset = data.split("_")[1]
-            keyboard = await generate_thread_keyboard(
-                connection, user, limit=10, offset=offset
+            keyboard = await keyboard_manager.generate_thread_keyboard(
+                user=user, limit=10, offset=offset
             )
-            await query.message.reply_text("Чаты:", reply_markup=keyboard)
+            await query.edit_message_text("Чаты:", reply_markup=keyboard)
 
         elif data == "create_new_chat":
-            thread = await create_or_update_thread(
-                connection, user["id"], title=default_chat_title(), set_active=True
+            thread = await store.create_or_update_thread(
+                user["id"], title=default_chat_title(), set_active=True
             )
 
             await query.message.reply_text("Вы создали новый чат")
             await query.message.reply_text(
                 f"Активный чат: {thread['title']}",
-                reply_markup=get_main_menu_keyboard(
+                reply_markup=keyboard_manager.get_main_menu_keyboard(
                     context, selected_thread=thread, active_thread=thread
                 )
             )
         else:
             await query.answer()
+    finally:
+        await store.close()
 
 
 async def user_message(update: Update, context):
-    """Обработчик пользовательских сообщений."""
-    async with rethinkdb_connection() as connection:
+    store = RethinkDocStore()
+    await store.connect()
+    try:
+        keyboard_manager = get_keyboard_manager(store)
+
         logger.info("Received user message")
 
-
-        user = await upsert_user(connection, {
+        user = await store.upsert_user({
             "id": update.message.from_user.id,
             "first_name": update.message.from_user.first_name,
             "last_name": update.message.from_user.last_name,
@@ -321,32 +331,30 @@ async def user_message(update: Update, context):
         user_data = context.user_data
         text = update.message.text.strip()
 
-
         selected_thread_id = user_data.get("selected_thread_id")
-        active_thread = await get_active_thread(connection, user["id"])
-        selected_thread = await get_thread_by_id(connection, selected_thread_id) if selected_thread_id else None
+        active_thread = await store.get_active_thread(user["id"])
+        selected_thread = await store.get_thread_by_id(selected_thread_id) if selected_thread_id else None
 
         if text.startswith("✅ ") or text.startswith("◻️ "):
             if selected_thread:
-                is_active = selected_thread["id"] == (active_thread["id"] if active_thread else None)
+                is_active = active_thread and selected_thread["id"] == active_thread["id"]
                 if not is_active:
-                    await create_or_update_thread(connection, user["id"], thread_id=selected_thread["id"],
-                                                  set_active=True)
-                    active_thread = await get_thread_by_id(connection, selected_thread["id"])
+                    await store.create_or_update_thread(user["id"], thread_id=selected_thread["id"], set_active=True)
+                    active_thread = await store.get_thread_by_id(selected_thread["id"])
 
                     await update.message.reply_text(
                         f"Чат '{selected_thread['title']}' теперь активен.",
-                        reply_markup=get_main_menu_keyboard(context, selected_thread, active_thread)
+                        reply_markup=keyboard_manager.get_main_menu_keyboard(context, selected_thread, active_thread)
                     )
                 else:
                     await update.message.reply_text(
                         f"Чат '{selected_thread['title']}' уже активен.",
-                        reply_markup=get_main_menu_keyboard(context, selected_thread, active_thread)
+                        reply_markup=keyboard_manager.get_main_menu_keyboard(context, selected_thread, active_thread)
                     )
             else:
                 await update.message.reply_text(
                     "Нет выбранного чата.",
-                    reply_markup=get_main_menu_keyboard(context, selected_thread, active_thread)
+                    reply_markup=keyboard_manager.get_main_menu_keyboard(context, selected_thread, active_thread)
                 )
             return
 
@@ -370,7 +378,7 @@ async def user_message(update: Update, context):
                 user_data["delete_thread_id"] = selected_thread["id"]
                 await update.message.reply_text(
                     "Вы уверены, что хотите удалить чат?",
-                    reply_markup=get_delete_confirmation_keyboard(selected_thread["id"])
+                    reply_markup=keyboard_manager.get_delete_confirmation_keyboard(selected_thread["id"])
                 )
             else:
                 await update.message.reply_text("Нет выбранного чата для удаления.")
@@ -378,7 +386,7 @@ async def user_message(update: Update, context):
 
         elif text == "💬 Сообщения":
             if selected_thread:
-                messages = await get_all_messages_by_thread_id(connection, selected_thread["id"])
+                messages = await store.get_all_messages_by_thread_id(selected_thread["id"])
                 formatted_messages = format_messages(messages)
                 if formatted_messages:
                     await update.message.reply_text(formatted_messages)
@@ -389,21 +397,20 @@ async def user_message(update: Update, context):
             return
 
         elif text == "📜 Чаты":
-            keyboard = await generate_thread_keyboard(
-                connection, user, limit=10, offset=user.get("current_thread_offset", 0)
+            keyboard = await keyboard_manager.generate_thread_keyboard(
+                user=user, limit=10, offset=user.get("current_thread_offset", 0)
             )
             await update.message.reply_text("Чаты:", reply_markup=keyboard)
             return
 
-        elif text == "➕ Создать чат":
-            thread = await create_or_update_thread(connection, user["id"], title=default_chat_title(), set_active=True)
-
+        elif text == "➕ Новый чат":
+            thread = await store.create_or_update_thread(user["id"], title=default_chat_title(), set_active=True)
             user_data["selected_thread_id"] = thread["id"]
 
             await update.message.reply_text("Вы создали новый чат")
             await update.message.reply_text(
                 f"Активный чат: {thread['title']}",
-                reply_markup=get_main_menu_keyboard(context, selected_thread=thread, active_thread=thread)
+                reply_markup=keyboard_manager.get_main_menu_keyboard(context, selected_thread=thread, active_thread=thread)
             )
             return
 
@@ -412,47 +419,44 @@ async def user_message(update: Update, context):
                 user_data.pop("edit_thread_id")
                 await update.message.reply_text(
                     "Редактирование отменено.",
-                    reply_markup=get_main_menu_keyboard(context, selected_thread, active_thread)
+                    reply_markup=keyboard_manager.get_main_menu_keyboard(context, selected_thread, active_thread)
                 )
             else:
                 await update.message.reply_text(
                     "Действие отменено.",
-                    reply_markup=get_main_menu_keyboard(context, selected_thread, active_thread)
+                    reply_markup=keyboard_manager.get_main_menu_keyboard(context, selected_thread, active_thread)
                 )
             return
 
         if "edit_thread_id" in user_data:
             thread_id = user_data.pop("edit_thread_id")
             new_title = text
-            await create_or_update_thread(connection, user["id"], thread_id=thread_id, title=new_title)
-            thread = await get_thread_by_id(connection, thread_id)
+            await store.create_or_update_thread(user["id"], thread_id=thread_id, title=new_title)
+            thread = await store.get_thread_by_id(thread_id)
             selected_thread = thread
             await update.message.reply_text(
                 "Название чата обновлено.",
-                reply_markup=get_main_menu_keyboard(context, selected_thread, active_thread)
+                reply_markup=keyboard_manager.get_main_menu_keyboard(context, selected_thread, active_thread)
             )
             return
 
         await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
 
         if not active_thread:
-            active_thread = await create_or_update_thread(connection, user["id"], title=default_chat_title(),
-                                                          set_active=True)
+            active_thread = await store.create_or_update_thread(user["id"], title=default_chat_title(), set_active=True)
             user_data["selected_thread_id"] = active_thread["id"]
 
-        human_message = await add_message_to_thread(
-            connection,
+        human_message = await store.add_message_to_thread(
             thread_id=active_thread["id"],
             text=update.message.text,
             message_type=MessageTypeEnum.human.value,
         )
 
-        db_messages = await get_all_messages_by_thread_id(connection, active_thread["id"])
+        db_messages = await store.get_all_messages_by_thread_id(active_thread["id"])
 
-        default_prompt = await get_value(connection, "model_promt")
+        default_prompt = await store.get_value("model_promt")
 
-
-        messages = [SystemMessage(content=default_prompt)]
+        messages = [SystemMessage(content=default_prompt)] if default_prompt else []
 
         for message in db_messages:
             if message["message_type"] == MessageTypeEnum.human.value:
@@ -460,8 +464,7 @@ async def user_message(update: Update, context):
             elif message["message_type"] == MessageTypeEnum.ai.value:
                 messages.append(AIMessage(content=message["text"]))
 
-        kv_dict = await get_kv_pairs(
-            connection,
+        kv_dict = await store.get_kv_pairs(
             keys=[
                 "model_promt",
                 "model_base_url",
@@ -475,7 +478,6 @@ async def user_message(update: Update, context):
             ]
         )
 
-        # Настраиваем обработчик Telegram
         handler = TelegramChatter(
             message=update.message,
             bot=context.bot,
@@ -484,10 +486,8 @@ async def user_message(update: Update, context):
             initial_token_threshold=int(kv_dict.get("model_initial_token_threshold", 5)),
             typing_interval=int(kv_dict.get("model_typing_interval", 2)),
         )
-        print(kv_dict.get("model_base_url"))
         callback_manager = AsyncCallbackManager([handler])
 
-        # Пробуем вызвать LLM через базовый URL
         try:
             llm = ChatOpenAI(
                 base_url=kv_dict.get("model_base_url"),
@@ -503,7 +503,7 @@ async def user_message(update: Update, context):
         except Exception as e:
             logger.error(f"Error using base_url LLM: {e}")
 
-            # Fallback на модель OpenAI по умолчанию
+            # Fallback к openai_default_model
             try:
                 llm = ChatOpenAI(
                     model_name=kv_dict.get("model_openai_default_model", "gpt-3.5-turbo"),
@@ -520,25 +520,24 @@ async def user_message(update: Update, context):
                 await update.message.reply_text("Извините, у меня возникли проблемы с генерацией ответа.")
                 return
 
-        # Извлекаем текст ответа от модели
         ai_message = response.generations[0][0].text
 
         # Сохраняем ответ модели в базе данных
-        ai_message_db = await add_message_to_thread(
-            connection,
+        ai_message_db = await store.add_message_to_thread(
             thread_id=active_thread["id"],
             text=ai_message,
             message_type=MessageTypeEnum.ai.value,
         )
 
-        rating_keyboard = get_rating_keyboard(ai_message_db["id"])
+        rating_keyboard = keyboard_manager.get_rating_keyboard(ai_message_db["id"])
 
-        # Пробуем обновить сообщение с клавиатурой
         try:
             await handler.message.edit_reply_markup(reply_markup=rating_keyboard)
         except BadRequest as e:
             logger.error(f"Error editing message: {e}")
             await update.message.reply_text('🤖 Оцените ответ:', reply_markup=rating_keyboard)
+    finally:
+        await store.close()
 
 
 

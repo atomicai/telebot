@@ -71,9 +71,7 @@ class TelegramChatter(AsyncCallbackHandler):
 
     async def on_llm_end(self, response, **kwargs):
         logger.info(f"LLM has finished generating tokens {response}")
-        # Signal that LLM has finished generating tokens
         self.done_event.set()
-        # Wait for background tasks to finish final updates
+
         await self.edit_task
-        # if self.typing_task:
-        #     await self.typing_task
+
