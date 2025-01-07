@@ -56,3 +56,36 @@ class KV:
     def __init__(self, key: str, value: str = None):
         self.key = key
         self.value = value
+
+
+class PipelineLog:
+    """Модель лога для операций, связанных непосредственно с пайплайном LLM."""
+    def __init__(
+        self,
+        message_id: str | None = None,
+        log_id: str | None = None,
+        log_data: str | None = None,
+        log_owner: str | None = None,
+        log_datatime: int | None = None,
+        pipeline_version: str | None = None
+    ):
+        self.message_id = message_id
+        self.log_id = log_id
+        self.log_data = log_data
+        self.log_owner = log_owner
+        self.log_datatime = log_datatime
+        self.pipeline_version = pipeline_version
+
+class BackLog:
+    """Модель лога для всех вспомогательных действий (BD-операции, нажатия кнопок, ошибки и т.д.)."""
+    def __init__(
+        self,
+        log_id: str | None = None,
+        log_data: str | None = None,
+        log_owner: str | None = None,
+        log_datatime: int | None = None
+    ):
+        self.log_id = log_id
+        self.log_data = log_data
+        self.log_owner = log_owner
+        self.log_datatime = log_datatime
