@@ -74,4 +74,3 @@ class TelegramChatter(AsyncCallbackHandler):
         self.done_event.set()
 
         await self.edit_task
-

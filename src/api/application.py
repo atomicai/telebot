@@ -44,31 +44,79 @@ def get_telegram_application() -> Application:
 
 async def set_webhook(url: Optional[str] = None):
     """Установка вебхука для Telegram-бота."""
-    if url is None:
-        url = telegram_bot_config.WEBHOOK_URL
-    application = get_telegram_application()
-    status_ = await application.bot.set_webhook(url=url)
-    if not status_:
-        logger.error(f"Failed to set webhook with URL: {url}")
-        return False
-    logger.info(f"Webhook set successfully with URL: {url}")
-    return True
+    store = RethinkDocStore()
+    await store.init_db()
+    await store.connect()
+    try:
+        if url is None:
+            url = telegram_bot_config.WEBHOOK_URL
+
+
+        logger.info(f"Trying to set webhook at: {url}")
+        await store.create_back_log(
+            log_data=f"Trying to set webhook at: {url}",
+            log_owner="application.set_webhook"
+        )
+
+        application = get_telegram_application()
+        status_ = await application.bot.set_webhook(url=url)
+
+        if not status_:
+
+            logger.error(f"Failed to set webhook: {url}")
+            await store.create_back_log(
+                log_data=f"Failed to set webhook: {url}",
+                log_owner="application.set_webhook"
+            )
+            return False
+
+
+        logger.info(f"Webhook set successfully: {url}")
+        await store.create_back_log(
+            log_data=f"Webhook set successfully: {url}",
+            log_owner="application.set_webhook"
+        )
+        return True
+    finally:
+        await store.close()
 
 
 async def set_commands(application: Application):
     """Установка команд для Telegram-бота."""
-    await application.bot.set_my_commands(
-        [
-            BotCommand('start', 'Start the bot'),
-            BotCommand('new_chat', 'Create a new chat'),
-            BotCommand('chat', 'Enable or disable a chat menu'),
-        ],
-    )
-    logger.info("Commands set successfully")
+    store = RethinkDocStore()
+    await store.init_db()
+    await store.connect()
+    try:
+        logger.info("Setting bot commands...")
+        await store.create_back_log(
+            log_data="Setting bot commands...",
+            log_owner="application.set_commands"
+        )
+
+        await application.bot.set_my_commands(
+            [
+                BotCommand('start', 'Начать работу с ботом'),
+                BotCommand('new_chat', 'Создать новый чат'),
+                BotCommand('chat', 'Включить или выключить меню чата'),
+            ],
+        )
+
+        logger.info("Bot commands have been set successfully")
+        await store.create_back_log(
+            log_data="Bot commands have been set successfully",
+            log_owner="application.set_commands"
+        )
+    finally:
+        await store.close()
 
 
 async def setup_kv_defaults(store: RethinkDocStore):
     """Установка значений KV по умолчанию, если они ещё не установлены."""
+    logger.info("Checking and setting default KV values...")
+    await store.create_back_log(
+        log_data="Checking and setting default KV values...",
+        log_owner="application.setup_kv_defaults"
+    )
     await store.bulk_set_if_not_exists(
         {
             kv_settings.ai_model_promt_key: model_settings.promt,
@@ -85,23 +133,42 @@ async def setup_kv_defaults(store: RethinkDocStore):
 
 
 async def telegram_application_lifespan(app):
+    """Lifespan-контекст для управления жизненным циклом Telegram-приложения."""
     application = get_telegram_application()
-    await application.initialize()  # Инициализируем приложение
+    await application.initialize()
 
     store = RethinkDocStore()
+    await store.init_db()
     await store.connect()
     try:
+
+        logger.info("Starting Telegram application (lifespan)")
+        await store.create_back_log(
+            log_data="Starting Telegram application (lifespan)",
+            log_owner="application.telegram_application_lifespan"
+        )
+
         await set_commands(application)
         await store.init_db()
         await set_webhook()
 
+
         logger.info(f"Model settings loaded: {model_settings}")
+        await store.create_back_log(
+            log_data=f"Model settings loaded: {model_settings}",
+            log_owner="application.telegram_application_lifespan"
+        )
+
         await setup_kv_defaults(store)
 
-        # Не вызываем application.start() или stop(), так как мы обрабатываем обновления вручную
-
         yield
+
     finally:
+        logger.info("Stopping Telegram application (lifespan) and closing connection.")
+        await store.create_back_log(
+            log_data="Stopping Telegram application (lifespan) and closing connection.",
+            log_owner="application.telegram_application_lifespan"
+        )
         await store.close()
 
 
@@ -111,6 +178,18 @@ app = FastAPI(lifespan=telegram_application_lifespan)
 @app.post("/webhook")
 async def webhook_handler(request: Request):
     """Обработчик вебхука для Telegram."""
+    store = RethinkDocStore()
+    await store.connect()
+    try:
+
+        logger.info("Received request at /webhook")
+        await store.create_back_log(
+            log_data="Received request at /webhook",
+            log_owner="application.webhook_handler"
+        )
+    finally:
+        await store.close()
+
     data = await request.json()
     application = get_telegram_application()
     await application.process_update(Update.de_json(data=data, bot=application.bot))
@@ -122,9 +201,22 @@ async def set_webhook_endpoint(
     username: str = Depends(get_admin_username),
 ):
     """Установить вебхук."""
+    store = RethinkDocStore()
+    await store.connect()
+    try:
+
+        logger.info(f"Admin {username} requested to set webhook: {webhook_request.url}")
+        await store.create_back_log(
+            log_data=f"Admin {username} requested to set webhook: {webhook_request.url}",
+            log_owner="application.set_webhook_endpoint"
+        )
+    finally:
+        await store.close()
+
     success = await set_webhook(webhook_request.url)
     if not success:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to set webhook")
+
     return {"message": "Webhook set successfully", "url": webhook_request.url}
 
 
@@ -137,7 +229,21 @@ async def set_value_endpoint(
     store = RethinkDocStore()
     await store.connect()
     try:
+
+        logger.info(f"Admin {username} sets KV: {kv_request.key} = {kv_request.value}")
+        await store.create_back_log(
+            log_data=f"Admin {username} sets KV: {kv_request.key} = {kv_request.value}",
+            log_owner="application.set_value_endpoint"
+        )
+
         await store.set_value(kv_request.key, kv_request.value)
+
+
+        logger.info(f"KV has been set successfully: {kv_request.key} = {kv_request.value}")
+        await store.create_back_log(
+            log_data=f"KV has been set successfully: {kv_request.key} = {kv_request.value}",
+            log_owner="application.set_value_endpoint"
+        )
     finally:
         await store.close()
 
@@ -153,7 +259,21 @@ async def get_value_endpoint(
     store = RethinkDocStore()
     await store.connect()
     try:
+
+        logger.info(f"Admin {username} requests KV value for key: {key}")
+        await store.create_back_log(
+            log_data=f"Admin {username} requests KV value for key: {key}",
+            log_owner="application.get_value_endpoint"
+        )
+
         value = await store.get_value(key)
+
+
+        logger.info(f"KV value for key {key} = {value}")
+        await store.create_back_log(
+            log_data=f"KV value for key {key} = {value}",
+            log_owner="application.get_value_endpoint"
+        )
     finally:
         await store.close()
 
@@ -168,9 +288,22 @@ async def get_keys_endpoint(
     store = RethinkDocStore()
     await store.connect()
     try:
+
+        logger.info(f"Admin {username} requests all keys from KV.")
+        await store.create_back_log(
+            log_data=f"Admin {username} requests all keys from KV.",
+            log_owner="application.get_keys_endpoint"
+        )
+
         keys = await store.get_keys()
+
+
+        logger.info(f"Keys retrieved: {keys}")
+        await store.create_back_log(
+            log_data=f"Keys retrieved: {keys}",
+            log_owner="application.get_keys_endpoint"
+        )
     finally:
         await store.close()
 
     return {"keys": keys}
-
