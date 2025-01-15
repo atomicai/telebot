@@ -1,14 +1,15 @@
 import os
-import asyncio
 import time
 import uuid
-from typing import Optional, List, Dict
-from datetime import datetime
+from pathlib import Path
+from typing import Dict, List, Optional
+
 from loguru import logger
 from rethinkdb import r
 
-
-logger.add("./logs/loguru.log", encoding="utf-8", rotation="1 week")
+logger.add(
+    str(Path(os.getcwd()) / "LOGS" / "loguru.log"), encoding="utf-8", rotation="12 week"
+)
 
 
 class RethinkDocStore:
@@ -30,14 +31,14 @@ class RethinkDocStore:
         if self.conn:
             await self.create_back_log(
                 log_data="RethinkDB connection closed.",
-                log_owner="RethinkDocStore.close"
+                log_owner="RethinkDocStore.close",
             )
             await self.conn.close(noreply_wait=False)
             logger.info("RethinkDB connection closed.")
 
             self.conn = None
 
-    async def init_db(self):
+    async def on_startup_prepare_structure(self):
         """
         Инициализация БД и необходимых таблиц:
         - users
@@ -55,20 +56,27 @@ class RethinkDocStore:
                 await r.db_create(self.db).run(conn)
 
             tables = await r.db(self.db).table_list().run(conn)
-            required_tables = ["users", "threads", "messages", "kv", "pipeline", "backlogs"]
+            required_tables = [
+                "users",
+                "threads",
+                "messages",
+                "kv",
+                "pipeline",
+                "backlogs",
+            ]
             for table in required_tables:
                 if table not in tables:
                     await r.db(self.db).table_create(table).run(conn)
+                await r.db(self.db).wait().run(conn)
 
             logger.info("Database and tables are ready.")
-
 
     async def create_pipeline_log(
         self,
         message_id: Optional[str] = None,
         log_data: Optional[str] = None,
         log_owner: Optional[str] = None,
-        pipeline_version: str = "v1"
+        pipeline_version: str = "v1",
     ) -> None:
         """
         Запись лога в таблицу "pipeline" + запись в loguru-файл.
@@ -93,16 +101,14 @@ class RethinkDocStore:
         logger.info(f"[PIPELINE] {log_owner}: {log_data}")
 
     async def create_back_log(
-        self,
-        log_data: Optional[str] = None,
-        log_owner: Optional[str] = None
+        self, log_data: Optional[str] = None, log_owner: Optional[str] = None
     ) -> None:
         """
         Запись лога в таблицу "backlogs" + запись в loguru-файл.
         BackLog используется для хранения вспомогательной и отладочной информации.
         """
         backlogs_table = r.db(self.db).table("backlogs")
-
+        logger.info(backlogs_table)
         log_id = str(uuid.uuid4())
         log_datatime = int(time.time() * 1000)
 
@@ -129,11 +135,10 @@ class RethinkDocStore:
                 updated_user["current_thread_offset"] = offset
             await users_table.get(user_data["id"]).update(updated_user).run(self.conn)
 
-
             logger.info(f"User {user_data['id']} data updated.")
             await self.create_back_log(
                 log_data=f"User {user_data['id']} data updated.",
-                log_owner="RethinkDocStore.upsert_user"
+                log_owner="RethinkDocStore.upsert_user",
             )
             return updated_user
         else:
@@ -144,15 +149,16 @@ class RethinkDocStore:
             }
             await users_table.insert(new_user).run(self.conn)
 
-
             logger.info(f"User {user_data['id']} created.")
             await self.create_back_log(
                 log_data=f"User {user_data['id']} created.",
-                log_owner="RethinkDocStore.upsert_user"
+                log_owner="RethinkDocStore.upsert_user",
             )
             return new_user
 
-    async def get_user_threads(self, user_id: int, limit: int = 10, offset: int = 0) -> tuple[List[Dict], int]:
+    async def get_user_threads(
+        self, user_id: int, limit: int = 10, offset: int = 0
+    ) -> tuple[List[Dict], int]:
         """
         Поддержка просмотра потоков для пользователя.
         """
@@ -162,28 +168,31 @@ class RethinkDocStore:
         limit = int(limit)
 
         cursor = (
-            await threads_table
-            .filter({"user_id": user_id})
+            await threads_table.filter({"user_id": user_id})
             .order_by(r.desc("created_at"))
             .slice(offset, offset + limit)
             .run(self.conn)
         )
         threads = cursor
-        total_count = await threads_table.filter({"user_id": user_id}).count().run(self.conn)
+        total_count = (
+            await threads_table.filter({"user_id": user_id}).count().run(self.conn)
+        )
 
-        logger.info(f"Fetched {len(threads)} threads for user {user_id}, total threads={total_count}.")
+        logger.info(
+            f"Fetched {len(threads)} threads for user {user_id}, total threads={total_count}."
+        )
         await self.create_back_log(
             log_data=f"Fetched {len(threads)} threads for user {user_id}, total threads={total_count}.",
-            log_owner="RethinkDocStore.get_user_threads"
+            log_owner="RethinkDocStore.get_user_threads",
         )
         return threads, total_count
 
     async def create_or_update_thread(
-            self,
-            user_id: int,
-            thread_id: Optional[int] = None,
-            title: Optional[str] = None,
-            set_active: bool = False
+        self,
+        user_id: int,
+        thread_id: Optional[int] = None,
+        title: Optional[str] = None,
+        set_active: bool = False,
     ) -> Dict:
         """
         Управление потоками пользователя, включая создание, обновление и выбор активного потока.
@@ -194,10 +203,12 @@ class RethinkDocStore:
         if thread_id:
             thread = await threads_table.get(thread_id).run(self.conn)
             if not thread or thread["user_id"] != user_id:
-                logger.info(f"Thread {thread_id} not found or not owned by user {user_id}.")
+                logger.info(
+                    f"Thread {thread_id} not found or not owned by user {user_id}."
+                )
                 await self.create_back_log(
                     log_data=f"Thread {thread_id} not found or not owned by user {user_id}.",
-                    log_owner="RethinkDocStore.create_or_update_thread"
+                    log_owner="RethinkDocStore.create_or_update_thread",
                 )
                 raise ValueError("Thread not found or not owned by user.")
             if title:
@@ -205,17 +216,24 @@ class RethinkDocStore:
             await threads_table.get(thread_id).update(thread).run(self.conn)
         else:
             thread = {"user_id": user_id, "title": title}
-            result = await threads_table.insert(thread, return_changes=True).run(self.conn)
+            result = await threads_table.insert(thread, return_changes=True).run(
+                self.conn
+            )
             thread = result["changes"][0]["new_val"]
 
         if set_active:
-            await users_table.get(user_id).update({"active_thread_id": thread["id"]}).run(self.conn)
+            await (
+                users_table.get(user_id)
+                .update({"active_thread_id": thread["id"]})
+                .run(self.conn)
+            )
 
-
-        logger.info(f"Thread {thread['id']} created/updated for user {user_id}. set_active={set_active}.")
+        logger.info(
+            f"Thread {thread['id']} created/updated for user {user_id}. set_active={set_active}."
+        )
         await self.create_back_log(
             log_data=f"Thread {thread['id']} created/updated for user {user_id}. set_active={set_active}.",
-            log_owner="RethinkDocStore.create_or_update_thread"
+            log_owner="RethinkDocStore.create_or_update_thread",
         )
         return thread
 
@@ -231,7 +249,7 @@ class RethinkDocStore:
             logger.info(f"No active thread found for user {user_id}.")
             await self.create_back_log(
                 log_data=f"No active thread found for user {user_id}.",
-                log_owner="RethinkDocStore.get_active_thread"
+                log_owner="RethinkDocStore.get_active_thread",
             )
             return None
 
@@ -240,7 +258,7 @@ class RethinkDocStore:
         logger.info(f"Fetched active thread {thread['id']} for user {user_id}.")
         await self.create_back_log(
             log_data=f"Fetched active thread {thread['id']} for user {user_id}.",
-            log_owner="RethinkDocStore.get_active_thread"
+            log_owner="RethinkDocStore.get_active_thread",
         )
         return thread
 
@@ -256,7 +274,11 @@ class RethinkDocStore:
         if not thread:
             raise ValueError("Thread not found.")
 
-        await users_table.filter({"active_thread_id": thread_id}).update({"active_thread_id": None}).run(self.conn)
+        await (
+            users_table.filter({"active_thread_id": thread_id})
+            .update({"active_thread_id": None})
+            .run(self.conn)
+        )
 
         await messages_table.filter({"thread_id": thread_id}).delete().run(self.conn)
 
@@ -265,7 +287,7 @@ class RethinkDocStore:
         logger.info(f"Thread {thread_id} and all related messages have been deleted.")
         await self.create_back_log(
             log_data=f"Thread {thread_id} and all related messages have been deleted.",
-            log_owner="RethinkDocStore.delete_thread"
+            log_owner="RethinkDocStore.delete_thread",
         )
 
     async def get_thread_by_id(self, thread_id: int) -> Dict:
@@ -277,11 +299,10 @@ class RethinkDocStore:
         if not thread:
             raise ValueError("Thread not found.")
 
-
         logger.info(f"Thread {thread_id} retrieved.")
         await self.create_back_log(
             log_data=f"Thread {thread_id} retrieved.",
-            log_owner="RethinkDocStore.get_thread_by_id"
+            log_owner="RethinkDocStore.get_thread_by_id",
         )
         return thread
 
@@ -290,7 +311,11 @@ class RethinkDocStore:
         Обеспечивает доступ ко всем сообщениям в контексте конкретного потока.
         """
         messages_table = r.db(self.db).table("messages")
-        cursor = await messages_table.filter({"thread_id": thread_id}).order_by("created_at").run(self.conn)
+        cursor = (
+            await messages_table.filter({"thread_id": thread_id})
+            .order_by("created_at")
+            .run(self.conn)
+        )
 
         messages = []
         if isinstance(cursor, list):
@@ -299,20 +324,15 @@ class RethinkDocStore:
             async for message in cursor:
                 messages.append(message)
 
-
         logger.info(f"Fetched {len(messages)} messages for thread {thread_id}.")
         await self.create_back_log(
             log_data=f"Fetched {len(messages)} messages for thread {thread_id}.",
-            log_owner="RethinkDocStore.get_all_messages_by_thread_id"
+            log_owner="RethinkDocStore.get_all_messages_by_thread_id",
         )
         return messages
 
     async def add_message_to_thread(
-            self,
-            thread_id: int,
-            text: str,
-            message_type: str,
-            rating: Optional[str] = None
+        self, thread_id: int, text: str, message_type: str, rating: Optional[str] = None
     ) -> Dict:
         """
         Создание новых сообщений, связанных с потоком, для взаимодействия пользователей.
@@ -325,22 +345,20 @@ class RethinkDocStore:
             "rating": rating,
             "created_at": r.now(),
         }
-        result = await messages_table.insert(message, return_changes=True).run(self.conn)
+        result = await messages_table.insert(message, return_changes=True).run(
+            self.conn
+        )
         new_msg = result["changes"][0]["new_val"]
-
 
         logger.info(f"Message added to thread {thread_id}, type={message_type}")
         await self.create_back_log(
             log_data=f"Message added to thread {thread_id}, type={message_type}",
-            log_owner="RethinkDocStore.add_message_to_thread"
+            log_owner="RethinkDocStore.add_message_to_thread",
         )
         return new_msg
 
     async def update_message(
-            self,
-            message_id: int,
-            text: Optional[str] = None,
-            rating: Optional[str] = None
+        self, message_id: int, text: Optional[str] = None, rating: Optional[str] = None
     ) -> Dict:
         """
         Позволяет редактировать ранее созданные сообщения.
@@ -357,11 +375,12 @@ class RethinkDocStore:
 
         await messages_table.get(message_id).update(message).run(self.conn)
 
-
-        logger.info(f"Message {message_id} updated (text={bool(text)}, rating={rating})")
+        logger.info(
+            f"Message {message_id} updated (text={bool(text)}, rating={rating})"
+        )
         await self.create_back_log(
             log_data=f"Message {message_id} updated (text={bool(text)}, rating={rating})",
-            log_owner="RethinkDocStore.update_message"
+            log_owner="RethinkDocStore.update_message",
         )
         return message
 
@@ -382,7 +401,7 @@ class RethinkDocStore:
         logger.info(f"Retrieved value for key={key}: {value}")
         await self.create_back_log(
             log_data=f"Retrieved value for key={key}: {value}",
-            log_owner="RethinkDocStore.get_value"
+            log_owner="RethinkDocStore.get_value",
         )
         return value
 
@@ -401,7 +420,7 @@ class RethinkDocStore:
         logger.info(f"Set KV value: key={key}, value={value}")
         await self.create_back_log(
             log_data=f"Set KV value: key={key}, value={value}",
-            log_owner="RethinkDocStore.set_value"
+            log_owner="RethinkDocStore.set_value",
         )
 
     async def delete_value(self, key: str):
@@ -411,11 +430,9 @@ class RethinkDocStore:
         kv_table = r.db(self.db).table("kv")
         await kv_table.get(key).delete().run(self.conn)
 
-
         logger.info(f"Deleted KV key: {key}")
         await self.create_back_log(
-            log_data=f"Deleted KV key: {key}",
-            log_owner="RethinkDocStore.delete_value"
+            log_data=f"Deleted KV key: {key}", log_owner="RethinkDocStore.delete_value"
         )
 
     async def get_keys(self) -> List[str]:
@@ -429,8 +446,7 @@ class RethinkDocStore:
 
         logger.info(f"Fetched keys: {keys}")
         await self.create_back_log(
-            log_data=f"Fetched keys: {keys}",
-            log_owner="RethinkDocStore.get_keys"
+            log_data=f"Fetched keys: {keys}", log_owner="RethinkDocStore.get_keys"
         )
         return keys
 
@@ -439,7 +455,9 @@ class RethinkDocStore:
         Выборочное извлечение конфигурационных данных.
         """
         kv_table = r.db(self.db).table("kv")
-        cursor = await kv_table.filter(lambda row: r.expr(keys).contains(row["key"])).run(self.conn)
+        cursor = await kv_table.filter(
+            lambda row: r.expr(keys).contains(row["key"])
+        ).run(self.conn)
 
         kv_list = []
         async for item in cursor:
@@ -447,11 +465,10 @@ class RethinkDocStore:
 
         result = {kv["key"]: kv.get("value") for kv in kv_list}
 
-
         logger.info(f"Retrieved KV pairs for keys: {keys}")
         await self.create_back_log(
             log_data=f"Retrieved KV pairs for keys: {keys}",
-            log_owner="RethinkDocStore.get_kv_pairs"
+            log_owner="RethinkDocStore.get_kv_pairs",
         )
         return result
 
@@ -460,7 +477,9 @@ class RethinkDocStore:
         Массовое добавление данных без перезаписи существующих значений.
         """
         kv_table = r.db(self.db).table("kv")
-        cursor = await kv_table.filter(lambda doc: r.expr(list(kv_dict.keys())).contains(doc["key"])).run(self.conn)
+        cursor = await kv_table.filter(
+            lambda doc: r.expr(list(kv_dict.keys())).contains(doc["key"])
+        ).run(self.conn)
 
         existing_keys = set()
         async for entry in cursor:
@@ -474,8 +493,10 @@ class RethinkDocStore:
 
         if new_kv_entries:
             await kv_table.insert(new_kv_entries).run(self.conn)
-            logger.info(f"Default bulk insert of KV without overwrite: {list(kv_dict.keys())}")
+            logger.info(
+                f"Default bulk insert of KV without overwrite: {list(kv_dict.keys())}"
+            )
             await self.create_back_log(
                 log_data=f"Default bulk insert of KV without overwrite: {list(kv_dict.keys())}",
-                log_owner="RethinkDocStore.bulk_set_if_not_exists"
+                log_owner="RethinkDocStore.bulk_set_if_not_exists",
             )
