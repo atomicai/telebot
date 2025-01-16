@@ -24,6 +24,7 @@ services:
       - "7777:7777"
     volumes:
       - ./src:/opt/app-root/src:rw
+      - ./LOGS:/LOGS:rw
 
 volumes:
   rethinkdb_data:

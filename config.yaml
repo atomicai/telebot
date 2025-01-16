@@ -1,15 +1,17 @@
-extern:
-  models:
-    - gpt-4-0613
-    - gpt-4-0314
-  save_extern_path: ".data/external"
-
 api:
   devices_to_use:
     - cuda:0
     - cpu
     - mps
-  openai_model_path: gpt-4o-mini
 
-log:
-  log_grafana_metrics: true
+loguru:
+  LOG_FILE_NAME: '/LOGS/loguru.log'
+  LOG_ROTATION: '22 MB'
+  LOG_RETENTION: '100 days'
+
+llm:
+  LLM_API_KEY: '-'
+  LLM_API_URL: ''
+  LLM_MODEL: 'gpt-4o-mini'
+  temperature: 0.0
+  top_p: 0.5
