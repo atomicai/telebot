@@ -1,15 +1,10 @@
 import os
 import time
 import uuid
-from pathlib import Path
 from typing import Dict, List, Optional
 
 from loguru import logger
 from rethinkdb import r
-
-logger.add(
-    str(Path(os.getcwd()) / "LOGS" / "loguru.log"), encoding="utf-8", rotation="12 week"
-)
 
 
 class RethinkDocStore:
