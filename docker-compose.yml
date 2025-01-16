@@ -19,9 +19,9 @@ services:
       dockerfile: Dockerfile
     env_file:
       - .env
-    restart: unless-stopped
+    # restart: on-failure
     ports:
-      - "7420:7420"
+      - "7777:7777"
     volumes:
       - ./src:/opt/app-root/src:rw
 

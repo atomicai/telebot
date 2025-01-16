@@ -4,7 +4,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class SGIConfig(BaseSettings):
     HTTP_PROTOCOL: str = "http"
     HOST: str = "0.0.0.0"
-    PORT: int = 7420
+    PORT: int = 7777
 
     WORKERS_COUNT: int = 1
 
@@ -14,7 +14,7 @@ class SGIConfig(BaseSettings):
     WSGI_APP: str = "api.application:app"
     WORKER_CLASS: str = "uvicorn.workers.UvicornWorker"
 
-    model_config = SettingsConfigDict(env_prefix='SGI_')
+    model_config = SettingsConfigDict(env_prefix="SGI_")
 
 
 sgi_config = SGIConfig()
