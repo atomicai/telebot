@@ -3,7 +3,7 @@ import time
 import uuid
 from typing import Dict, List, Optional
 
-from loguru import logger
+from src.configuring.loggers import logger
 from rethinkdb import r
 
 

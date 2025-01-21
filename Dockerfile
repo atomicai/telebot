@@ -9,6 +9,8 @@ RUN pip install --no-cache-dir -r /opt/app-root/requirements.txt
 ENV PYTHONPATH /opt/app-root
 ENV PYTHONUNBUFFERED=1
 
+COPY config.yaml /opt/app-root/
+
 COPY entrypoint.sh /opt/app-root
 RUN chmod +x /opt/app-root/entrypoint.sh
 

@@ -1,11 +1,8 @@
-from typing import Optional, List
-import os
-from loguru import logger
+from typing import List
+from src.configuring.loggers import logger
 
 from telegram import (
     Update,
-    InlineKeyboardButton,
-    InlineKeyboardMarkup,
     ReplyKeyboardMarkup,
     KeyboardButton,
     ReplyKeyboardRemove,
@@ -24,6 +21,7 @@ from src.running.telegram_chatter import TelegramChatter
 from src.etc.schema import MessageTypeEnum, RatingEnum
 from src.api.keyboards import KeyboardManager
 
+from src.running.prompts import AIBasePrompt
 
 def get_keyboard_manager(store: RethinkDocStore):
     return KeyboardManager(store)  # или KeyboardManager(store.conn), если так реализовано
@@ -694,13 +692,6 @@ async def user_message(update: Update, context):
         db_messages = await store.get_all_messages_by_thread_id(active_thread["id"])
 
         default_prompt = await store.get_value("model_promt")
-        messages = [SystemMessage(content=default_prompt)] if default_prompt else []
-
-        for message in db_messages:
-            if message["message_type"] == MessageTypeEnum.human.value:
-                messages.append(HumanMessage(content=message["text"]))
-            elif message["message_type"] == MessageTypeEnum.ai.value:
-                messages.append(AIMessage(content=message["text"]))
 
         kv_dict = await store.get_kv_pairs(
             keys=[
@@ -715,6 +706,17 @@ async def user_message(update: Update, context):
                 "model_typing_interval",
             ]
         )
+
+
+        prompt_runner = AIBasePrompt(system_prompt=default_prompt)
+
+        messages = [SystemMessage(content=prompt_runner.system_prompt)]
+
+        for message in db_messages:
+            if message["message_type"] == MessageTypeEnum.human.value:
+                messages.append(HumanMessage(content=message["text"]))
+            elif message["message_type"] == MessageTypeEnum.ai.value:
+                messages.append(AIMessage(content=message["text"]))
 
         handler = TelegramChatter(
             message=update.message,
@@ -807,8 +809,9 @@ async def user_message(update: Update, context):
                 await update.message.reply_text("Извините, у меня возникли проблемы с генерацией ответа.")
                 return
 
-        ai_message = response.generations[0][0].text
+        raw_ai_message = response.generations[0][0].text
 
+        ai_message = prompt_runner.finalize(update.message.text, raw_ai_message)
 
         logger.info("Saving model response to the database...")
         await store.create_back_log(
