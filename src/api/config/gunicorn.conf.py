@@ -1,15 +1,15 @@
 import os
 import signal
 
-from api.config.sgi_config import sgi_config
+from src.configuring.prime import Config
 
-wsgi_app = sgi_config.WSGI_APP
-bind = f"{sgi_config.HOST}:{sgi_config.PORT}"
-workers = sgi_config.WORKERS_COUNT
-worker_class = sgi_config.WORKER_CLASS
-reload = sgi_config.AUTO_RELOAD
-timeout = sgi_config.TIMEOUT
 
+wsgi_app = Config.sgi.WSGI_APP
+bind = f"{Config.sgi.HOST}:{Config.sgi.PORT}"
+workers = int(Config.sgi.WORKERS_COUNT)
+worker_class = Config.sgi.WORKER_CLASS
+reload = bool(Config.sgi.AUTO_RELOAD)
+timeout = int(Config.sgi.TIMEOUT)
 
 def worker_int(worker):
     os.kill(worker.pid, signal.SIGINT)

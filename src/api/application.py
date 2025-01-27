@@ -3,7 +3,7 @@ from functools import lru_cache
 from typing import Optional
 
 from fastapi import Depends, FastAPI
-from loguru import logger
+from src.configuring.loggers import logger
 from pydantic import BaseModel
 from starlette import status
 from starlette.exceptions import HTTPException
@@ -17,6 +17,8 @@ from telegram.ext import (
     filters,
 )
 
+from src.configuring.prime import Config
+
 from src.api.commands import (
     callback_query_handler,
     enable_chat_command,
@@ -24,9 +26,8 @@ from src.api.commands import (
     start,
     user_message,
 )
-from src.api.config.kv_config import kv_settings
-from src.api.config.model_config import model_settings
-from src.api.config.telegram_bot_config import telegram_bot_config
+
+
 from src.api.security.security import get_admin_username
 from src.running.restore import RethinkDocStore
 
@@ -43,7 +44,9 @@ class KVRequest(BaseModel):
 @lru_cache
 def get_telegram_application() -> Application:
     """Создание Telegram-приложения с обработчиками."""
-    application = Application.builder().token(telegram_bot_config.TOKEN).build()
+
+    token = Config.telegram.BOT_TOKEN
+    application = Application.builder().token(token).build()
 
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("new_chat", new_chat_command))
@@ -56,14 +59,16 @@ def get_telegram_application() -> Application:
     return application
 
 
-async def set_webhook(url: Optional[str] = None):
+async def set_webhook(url: Optional[str] = None) -> bool:
     """Установка вебхука для Telegram-бота."""
+
     store = RethinkDocStore()
     await store.on_startup_prepare_structure()
     await store.connect()
     try:
         if url is None:
-            url = telegram_bot_config.WEBHOOK_URL
+            logger.info(f"Config.telegram.WEBHOOK_URL: {Config.telegram.BOT_WEBHOOK_URL}")
+            url = Config.telegram.BOT_WEBHOOK_URL
 
         logger.info(f"Trying to set webhook at: {url}")
         await store.create_back_log(
@@ -94,13 +99,15 @@ async def set_webhook(url: Optional[str] = None):
 
 async def set_commands(application: Application):
     """Установка команд для Telegram-бота."""
+
     store = RethinkDocStore()
     await store.on_startup_prepare_structure()
     await store.connect()
     try:
         logger.info("Setting bot commands...")
         await store.create_back_log(
-            log_data="Setting bot commands...", log_owner="application.set_commands"
+            log_data="Setting bot commands...",
+            log_owner="application.set_commands"
         )
 
         await application.bot.set_my_commands(
@@ -122,28 +129,32 @@ async def set_commands(application: Application):
 
 async def setup_kv_defaults(store: RethinkDocStore):
     """Установка значений KV по умолчанию, если они ещё не установлены."""
+
     logger.info("Checking and setting default KV values...")
     await store.create_back_log(
         log_data="Checking and setting default KV values...",
         log_owner="application.setup_kv_defaults",
     )
+
+
     await store.bulk_set_if_not_exists(
         {
-            kv_settings.ai_model_promt_key: model_settings.promt,
-            kv_settings.ai_model_base_url_key: model_settings.base_url,
-            kv_settings.ai_model_openai_api_key_key: model_settings.openai_api_key,
-            kv_settings.ai_model_temperature_key: model_settings.temperature,
-            kv_settings.ai_model_max_tokens_key: model_settings.max_tokens,
-            kv_settings.ai_model_openai_default_model_key: model_settings.openai_default_model,
-            kv_settings.ai_model_edit_interval_key: model_settings.edit_interval,
-            kv_settings.ai_model_initial_token_threshold_key: model_settings.initial_token_threshold,
-            kv_settings.ai_model_typing_interval_key: model_settings.typing_interval,
+            "model_promt": Config.model.promt,
+            "model_base_url": Config.model.base_url,
+            "model_openai_api_key": Config.model.openai_api_key,
+            "model_temperature": Config.model.temperature,
+            "model_max_tokens": Config.model.max_tokens,
+            "model_openai_default_model": Config.model.openai_default_model,
+            "model_edit_interval": Config.model.edit_interval,
+            "model_initial_token_threshold": Config.model.initial_token_threshold,
+            "model_typing_interval": Config.model.typing_interval,
         }
     )
 
 
 async def telegram_application_lifespan(app):
     """Lifespan-контекст для управления жизненным циклом Telegram-приложения."""
+
     application = get_telegram_application()
     await application.initialize()
 
@@ -160,15 +171,15 @@ async def telegram_application_lifespan(app):
         await set_commands(application)
         await set_webhook()
 
-        logger.info(f"Model settings loaded: {model_settings}")
+        logger.info(f"Model settings loaded: {Config.model}")
         await store.create_back_log(
-            log_data=f"Model settings loaded: {model_settings}",
+            log_data=f"Model settings loaded: {Config.model}",
             log_owner="application.telegram_application_lifespan",
         )
 
         await setup_kv_defaults(store)
 
-        yield
+        yield  # Запуск приложения
 
     finally:
         logger.info("Stopping Telegram application (lifespan) and closing connection.")
@@ -185,6 +196,7 @@ app = FastAPI(lifespan=telegram_application_lifespan)
 @app.post("/webhook")
 async def webhook_handler(request: Request):
     """Обработчик вебхука для Telegram."""
+
     store = RethinkDocStore()
     await store.connect()
     try:
@@ -197,6 +209,7 @@ async def webhook_handler(request: Request):
         await store.close()
 
     data = await request.json()
+    logger.info(f"Webhook data received: {data}")
     application = get_telegram_application()
     await application.process_update(Update.de_json(data=data, bot=application.bot))
 
@@ -207,6 +220,7 @@ async def set_webhook_endpoint(
     username: str = Depends(get_admin_username),
 ):
     """Установить вебхук."""
+
     store = RethinkDocStore()
     await store.connect()
     try:
@@ -234,6 +248,7 @@ async def set_value_endpoint(
     username: str = Depends(get_admin_username),
 ):
     """Установить значение в KV-хранилище."""
+
     store = RethinkDocStore()
     await store.connect()
     try:
@@ -245,9 +260,7 @@ async def set_value_endpoint(
 
         await store.set_value(kv_request.key, kv_request.value)
 
-        logger.info(
-            f"KV has been set successfully: {kv_request.key} = {kv_request.value}"
-        )
+        logger.info(f"KV has been set successfully: {kv_request.key} = {kv_request.value}")
         await store.create_back_log(
             log_data=f"KV has been set successfully: {kv_request.key} = {kv_request.value}",
             log_owner="application.set_value_endpoint",
@@ -268,6 +281,7 @@ async def get_value_endpoint(
     username: str = Depends(get_admin_username),
 ):
     """Получить значение из KV-хранилища."""
+
     store = RethinkDocStore()
     await store.connect()
     try:
@@ -295,6 +309,7 @@ async def get_keys_endpoint(
     username: str = Depends(get_admin_username),
 ):
     """Получить все ключи из KV-хранилища."""
+
     store = RethinkDocStore()
     await store.connect()
     try:

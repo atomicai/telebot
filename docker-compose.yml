@@ -21,10 +21,11 @@ services:
       - .env
     # restart: on-failure
     ports:
-      - "7777:7777"
+      - "${SGI_PORT}:${SGI_PORT}"
     volumes:
       - ./src:/opt/app-root/src:rw
       - ./LOGS:/LOGS:rw
+      - ./config.yaml:/opt/app-root/config.yaml:ro
 
 volumes:
   rethinkdb_data:

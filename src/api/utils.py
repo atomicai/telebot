@@ -2,7 +2,7 @@ from contextlib import suppress
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from loguru import logger
+from src.configuring.loggers import logger
 
 
 def suppress_and_log(*exceptions):

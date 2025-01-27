@@ -15,3 +15,28 @@ llm:
   LLM_MODEL: 'gpt-4o-mini'
   temperature: 0.0
   top_p: 0.5
+
+telegram:
+  BOT_TOKEN: ""
+  BOT_WEBHOOK_URL: ""
+  MODE: "webhook"
+
+sgi:
+  HOST: "0.0.0.0"
+  PORT: 7777
+  WORKERS_COUNT: 1
+  AUTO_RELOAD: true
+  TIMEOUT: 420
+  WSGI_APP: "api.application:app"
+  WORKER_CLASS: "uvicorn.workers.UvicornWorker"
+
+model:
+  base_url: ""
+  openai_api_key: ""
+  promt: "Ты чат бот"
+  temperature: 0.5
+  max_tokens: 2048
+  openai_default_model: "gpt-3.5-turbo"
+  edit_interval: 1
+  initial_token_threshold: 1
+  typing_interval: 5
