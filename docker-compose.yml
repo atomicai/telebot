@@ -7,9 +7,6 @@ services:
     environment:
       - RETHINKDB_DB=${RETHINKDB_DB}
     restart: unless-stopped
-    ports:
-      - "28015:28015"
-      - "8080:8080"
     volumes:
       - rethinkdb_data:/data:rw
 
