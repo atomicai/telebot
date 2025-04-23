@@ -3,8 +3,9 @@ import time
 import uuid
 from typing import Dict, List, Optional
 
-from src.configuring.loggers import logger
 from rethinkdb import r
+
+from src.configuring.loggers import logger
 
 
 class RethinkDocStore:
@@ -327,7 +328,12 @@ class RethinkDocStore:
         return messages
 
     async def add_message_to_thread(
-        self, thread_id: int, text: str, message_type: str, rating: Optional[str] = None
+        self,
+        thread_id: int,
+        text: str,
+        message_type: str,
+        rating: Optional[str] = None,
+        message_topic: str = None,
     ) -> Dict:
         """
         Создание новых сообщений, связанных с потоком, для взаимодействия пользователей.
