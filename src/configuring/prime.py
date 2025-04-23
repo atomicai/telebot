@@ -2,22 +2,10 @@ import os
 from pathlib import Path
 
 import dotenv
-import yaml
-from dotmap import DotMap
+from envyaml import EnvYAML
+from loguru import logger
+
 from src.etc.pattern import singleton
-
-
-def override_with_env(dotmap_obj: DotMap, prefix: str = ""):
-
-    for key, value in dotmap_obj.items():
-        env_var_name = (prefix + "_" if prefix else "") + key.upper()
-
-        if isinstance(value, DotMap):
-            override_with_env(value, env_var_name)
-        else:
-            env_val = os.getenv(env_var_name)
-            if env_val is not None:
-                dotmap_obj[key] = env_val
 
 
 @singleton
@@ -31,21 +19,22 @@ class IConfig:
     DEFAULT_KMEANS = dict()
 
     def __init__(self):
-
-        config_path = Path(__file__).parent.parent.parent / "config.yaml"
-        try:
-            with open(config_path, "r", encoding="utf-8") as fp:
-                raw_config = yaml.safe_load(fp)
-                config = DotMap(raw_config or {})
-        except FileNotFoundError:
-            config = DotMap()
-
-        dotenv.load_dotenv()
-        override_with_env(config)
-
+        logger.info(
+            f"IConfig | path to `config.yaml` = [{str(Path(os.getcwd()) / 'config.yaml')}]"
+        )
+        config = dict(EnvYAML(Path(os.getcwd()) / "config.yaml"))
+        logger.info(
+            f"/CONFIGURING | From config.yaml loaded K=[{config.keys()}] value(s)"
+        )
         for k, v in config.items():
+            if k.startswith("_"):
+                continue
             setattr(self, k, v)
+            logger.info(f"/CONFIGURING | {k}=[{v}]")
+        dotenv.load_dotenv()
 
 
 Config = IConfig()
+
+
 __all__ = ["Config"]
