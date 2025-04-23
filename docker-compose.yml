@@ -3,13 +3,14 @@ version: '3.8'
 services:
   rethinkdb:
     image: rethinkdb:latest
-    container_name: llm_bot_rethinkdb
     environment:
       - RETHINKDB_DB=${RETHINKDB_DB}
+      - RETHINKDB_VIEW_PORT=${RETHINKDB_VIEW_PORT}
+      - RETHINKDB_UI_VIEW_PORT=${RETHINKDB_UI_VIEW_PORT}
     restart: unless-stopped
     ports:
-      - "28015:28015"
-      - "8080:8080"
+      - "${RETHINKDB_VIEW_PORT}:28015"
+      - "${RETHINKDB_UI_VIEW_PORT}:8080"
     volumes:
       - rethinkdb_data:/data:rw
 
@@ -26,6 +27,8 @@ services:
       - ./src:/opt/app-root/src:rw
       - ./LOGS:/LOGS:rw
       - ./config.yaml:/opt/app-root/config.yaml:ro
+
+    command: ["gunicorn", "-c", "/opt/app-root/src/api/config/gunicorn.conf.py", "src.api.application:app"]
 
 volumes:
   rethinkdb_data:
