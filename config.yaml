@@ -9,17 +9,30 @@ loguru:
   LOG_ROTATION: '22 MB'
   LOG_RETENTION: '100 days'
 
-llm:
-  LLM_API_KEY: '-'
-  LLM_API_URL: ''
-  LLM_MODEL: 'gpt-4o-mini'
-  temperature: 0.0
-  top_p: 0.5
+search:
+  SEARCH_URL:  '${SEARCH_URL}'
+  search_by: hybrid
+  top_k: 5
 
-telegram:
-  BOT_TOKEN: ""
-  BOT_WEBHOOK_URL: ""
-  MODE: "webhook"
+llm:
+  LLM_API_KEY: '${LLM_API_KEY}'
+  LLM_API_URL: http://host.docker.internal:8777
+  SYSTEM_PROMPT: "
+
+  You are a highly capable language assistant with remarkable skillset on the following:
+
+    - History and mechanics of computer games.
+
+    - Well-versed in many films.
+
+    - Skilled at providing user support and guidance for complex systems (e.g. user portals, 
+      databases, or other technical domains).
+  
+    - Scientific facts and general historical facts"
+  LLM_MODEL: 'gpt-4o-mini'
+  temperature: 0.22
+  max_tokens: 4096
+  top_p: 10
 
 sgi:
   HOST: "0.0.0.0"
@@ -27,16 +40,13 @@ sgi:
   WORKERS_COUNT: 1
   AUTO_RELOAD: true
   TIMEOUT: 420
-  WSGI_APP: "api.application:app"
+  WSGI_APP: "src.api.application:app"
   WORKER_CLASS: "uvicorn.workers.UvicornWorker"
 
-model:
-  base_url: ""
-  openai_api_key: ""
-  promt: "Ты чат бот"
-  temperature: 0.5
-  max_tokens: 2048
-  openai_default_model: "gpt-3.5-turbo"
+telegram:
+  TELEGRAM_BOT_TOKEN: '${TELEGRAM_BOT_TOKEN}'
+  TELEGRAM_BOT_WEBHOOK_URL: '${TELEGRAM_BOT_WEBHOOK_URL}'
+  TELEGRAM_BOT_MODE: '${TELEGRAM_BOT_MODE}'
   edit_interval: 1
-  initial_token_threshold: 1
+  initial_token_threshold: 5
   typing_interval: 5
