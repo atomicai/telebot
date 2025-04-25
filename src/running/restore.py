@@ -334,6 +334,8 @@ class RethinkDocStore:
         message_type: str,
         rating: Optional[str] = None,
         message_topic: str = None,
+        is_relevant_towards_context: str = None,
+        parent_id: str = None,
     ) -> Dict:
         """
         Создание новых сообщений, связанных с потоком, для взаимодействия пользователей.
@@ -345,6 +347,9 @@ class RethinkDocStore:
             "message_type": message_type,
             "rating": rating,
             "created_at": r.now(),
+            "message_topic": message_topic,
+            "parent_id": parent_id,
+            "is_relevant_towards_context": is_relevant_towards_context,
         }
         result = await messages_table.insert(message, return_changes=True).run(
             self.conn
@@ -359,7 +364,12 @@ class RethinkDocStore:
         return new_msg
 
     async def update_message(
-        self, message_id: int, text: Optional[str] = None, rating: Optional[str] = None
+        self,
+        message_id: int,
+        text: Optional[str] = None,
+        rating: Optional[str] = None,
+        message_topic: Optional[str] = None,
+        is_relevant_towards_context: Optional[str] = None,
     ) -> Dict:
         """
         Позволяет редактировать ранее созданные сообщения.
@@ -373,6 +383,10 @@ class RethinkDocStore:
             message["text"] = text
         if rating is not None:
             message["rating"] = rating
+        if message_topic is not None:
+            message["message_topic"] = message_topic
+        if is_relevant_towards_context is not None:
+            message["is_relevant_towards_context"] = is_relevant_towards_context
 
         await messages_table.get(message_id).update(message).run(self.conn)
 

@@ -67,18 +67,14 @@ class JARVISRunner:
         self.SEARCH_URL = SEARCH_URL
         self.api = APIRunner(connect=3, backoff_factor=0.5)
 
-    async def arun(self, query: str, db_messages: list | None = None):
+    async def arun(
+        self, query: str, db_messages: list | None = None, return_state: bool = False
+    ):
         """
         :param: query - user's query
         :param: messages - The list of previous user's queries
         """
         '{\n  "answer": "GREETINGS",\n  "is_relevant_towards_context": false\n}'
-        messages = []
-        for message in db_messages:
-            if message["message_type"] == MessageTypeEnum.human.value:
-                messages.append(HumanMessage(content=message["text"]))
-            elif message["message_type"] == MessageTypeEnum.ai.value:
-                messages.append(AIMessage(content=message["text"]))
         async with self.api as api:
             search_results = await api.SEARCH(
                 queries=[query],
@@ -90,10 +86,16 @@ class JARVISRunner:
                 as_knowledge_base=True,
             )
 
-        js_se_response = dict(answer="GREETINGS", is_relevant_towards_context=False)
+        js_se_response = dict(
+            message_topic="GREETINGS", is_relevant_towards_context=False
+        )
         se_response = await self.se_runner.arun(query=query, content=search_results)
         try:
             parsed_se_response = json_repair.loads(se_response)
+            parsed_se_response["message_topic"] = parsed_se_response.pop("answer")
+            logger.info(
+                f"{self.se_runner.__class__.__name__} | state=[{parsed_se_response}]"
+            )
         except:
             logger.error(
                 f"{self.se_runner.__class__.__name__} | error parsing for the query=[{query}]"
@@ -101,10 +103,26 @@ class JARVISRunner:
         else:
             js_se_response.update(parsed_se_response)
 
+        messages = []
+        for message in db_messages:
+            if (
+                message["is_relevant_towards_context"]
+                != parsed_se_response["is_relevant_towards_context"]
+            ):
+                continue
+            if message["message_type"] == MessageTypeEnum.human.value:
+                messages.append(HumanMessage(content=message["text"]))
+            elif message["message_type"] == MessageTypeEnum.ai.value:
+                messages.append(AIMessage(content=message["text"]))
+        logger.info(
+            f"{self.__class__.__name__} | query=[{query}] | context=[{' ### '.join([msg.content for msg in messages])}]"
+        )
         if js_se_response["is_relevant_towards_context"]:
             response = await self.re_runner.arun(
                 query=query, content=search_results, messages=messages
             )
         else:
-            response = await self.fa_runner.arun(query=query)
-        return response
+            response = await self.fa_runner.arun(query=query, messages=messages)
+        if not return_state:
+            return response
+        return response, js_se_response

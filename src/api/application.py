@@ -3,7 +3,6 @@ from functools import lru_cache
 from typing import Optional
 
 from fastapi import Depends, FastAPI
-from src.configuring.loggers import logger
 from pydantic import BaseModel
 from starlette import status
 from starlette.exceptions import HTTPException
@@ -17,8 +16,6 @@ from telegram.ext import (
     filters,
 )
 
-from src.configuring.prime import Config
-
 from src.api.commands import (
     callback_query_handler,
     enable_chat_command,
@@ -26,9 +23,9 @@ from src.api.commands import (
     start,
     user_message,
 )
-
-
 from src.api.security.security import get_admin_username
+from src.configuring.loggers import logger
+from src.configuring.prime import Config
 from src.running.restore import RethinkDocStore
 
 
@@ -45,7 +42,7 @@ class KVRequest(BaseModel):
 def get_telegram_application() -> Application:
     """Создание Telegram-приложения с обработчиками."""
 
-    token = Config.telegram.BOT_TOKEN
+    token = Config.telegram["TELEGRAM_BOT_TOKEN"]
     application = Application.builder().token(token).build()
 
     application.add_handler(CommandHandler("start", start))
@@ -67,8 +64,10 @@ async def set_webhook(url: Optional[str] = None) -> bool:
     await store.connect()
     try:
         if url is None:
-            logger.info(f"Config.telegram.WEBHOOK_URL: {Config.telegram.BOT_WEBHOOK_URL}")
-            url = Config.telegram.BOT_WEBHOOK_URL
+            logger.info(
+                f"Config.telegram.WEBHOOK_URL: {Config.telegram['TELEGRAM_BOT_WEBHOOK_URL']}"
+            )
+            url = Config.telegram["TELEGRAM_BOT_WEBHOOK_URL"]
 
         logger.info(f"Trying to set webhook at: {url}")
         await store.create_back_log(
@@ -106,8 +105,7 @@ async def set_commands(application: Application):
     try:
         logger.info("Setting bot commands...")
         await store.create_back_log(
-            log_data="Setting bot commands...",
-            log_owner="application.set_commands"
+            log_data="Setting bot commands...", log_owner="application.set_commands"
         )
 
         await application.bot.set_my_commands(
@@ -135,7 +133,6 @@ async def setup_kv_defaults(store: RethinkDocStore):
         log_data="Checking and setting default KV values...",
         log_owner="application.setup_kv_defaults",
     )
-
 
     await store.bulk_set_if_not_exists(
         {
@@ -171,13 +168,13 @@ async def telegram_application_lifespan(app):
         await set_commands(application)
         await set_webhook()
 
-        logger.info(f"Model settings loaded: {Config.model}")
+        # logger.info(f"Model settings loaded: {Config.model}")
         await store.create_back_log(
-            log_data=f"Model settings loaded: {Config.model}",
+            log_data="Model settings loaded",
             log_owner="application.telegram_application_lifespan",
         )
 
-        await setup_kv_defaults(store)
+        # await setup_kv_defaults(store)
 
         yield  # Запуск приложения
 
@@ -260,7 +257,9 @@ async def set_value_endpoint(
 
         await store.set_value(kv_request.key, kv_request.value)
 
-        logger.info(f"KV has been set successfully: {kv_request.key} = {kv_request.value}")
+        logger.info(
+            f"KV has been set successfully: {kv_request.key} = {kv_request.value}"
+        )
         await store.create_back_log(
             log_data=f"KV has been set successfully: {kv_request.key} = {kv_request.value}",
             log_owner="application.set_value_endpoint",

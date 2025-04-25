@@ -10,6 +10,16 @@ import simplejson
 from src.etc.format import maybe_cast_to_str
 
 
+class MessageTopicEnum(Enum):
+    greetings = "GREETINGS"
+    search = "SEARCH"
+    lechat = "LECHAT"
+
+
+class MessageRelevanceEnum(Enum):
+    is_relevant_towards_context = "is_relevant_towards_context"
+
+
 class MessageTypeEnum(Enum):
     system = "system"
     human = "human"

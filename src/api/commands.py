@@ -698,6 +698,7 @@ async def user_message(update: Update, context):
             text=update.message.text,
             message_type=MessageTypeEnum.human.value,
         )
+        logger.info(f"human_message=[{human_message}]")
         db_messages = await store.get_all_messages_by_thread_id(active_thread["id"])
         # TODO LLM generating response in progress ...
         edit_interval = int(Config.telegram.get("edit_interval", 3))
@@ -768,9 +769,11 @@ async def user_message(update: Update, context):
                 se_runner=se_runner, fa_runner=fa_runner, re_runner=re_runner
             )
 
-            ai_message = await jarvis_runner.arun(  # Exclude last query from the user for history
-                query=db_messages[-1]["text"], db_messages=db_messages[:-1]
-            )
+            ai_message, state = await jarvis_runner.arun(
+                query=db_messages[-1]["text"],
+                db_messages=db_messages[:-1],
+                return_state=True,
+            )  # noqa
             logger.info("Saving model response to the database...")
             await store.create_back_log(
                 log_data="Saving model response to the database...",
@@ -780,6 +783,15 @@ async def user_message(update: Update, context):
                 thread_id=active_thread["id"],
                 text=ai_message,
                 message_type=MessageTypeEnum.ai.value,
+                parent_id=human_message["id"],
+                message_topic=state["message_topic"],
+                is_relevant_towards_context=state["is_relevant_towards_context"],
+            )
+
+            human_message = await store.update_message(
+                message_id=human_message["id"],
+                message_topic=state["message_topic"],
+                is_relevant_towards_context=state["is_relevant_towards_context"],
             )
 
             logger.info(
